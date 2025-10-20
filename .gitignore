@@ -77,6 +77,17 @@ frontend/build/
 # Docker
 docker-compose.override.yml
 
+# Docker镜像导出文件（部署用）
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+docker-images-export/
+docker-images-import/
+docker-images-temp/
+docker-images-offline/
+uma-audit5-docker-images-*.tar.gz
+uma-audit-images.tar.gz
+
 # 系统文件
 .DS_Store
 Thumbs.db
