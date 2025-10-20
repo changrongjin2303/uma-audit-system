@@ -1,0 +1,10 @@
+{
+  "id": 21,
+  "name": "体育馆",
+  "description": "测试项目，具体信息",
+  "status": "processing",
+  "location": "余杭",
+  "owner": null,
+  "contractor": null,
+  "created_at": "2025-08-30T04:01:24.023114+00:00"
+}

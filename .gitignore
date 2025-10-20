@@ -1,0 +1,112 @@
+# 环境配置文件（包含敏感信息）
+.env
+.env.*
+!.env.example
+.env.local
+.env.production
+.env.development
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志文件
+logs/
+*.log
+*.log.*
+
+# 上传文件
+uploads/
+temp/
+reports/
+
+# 数据库
+*.db
+*.sqlite
+*.sqlite3
+
+# 备份文件
+backup/
+*.backup
+*.bak
+
+# Node.js (前端)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 前端构建文件
+frontend/dist/
+frontend/build/
+
+# Docker
+docker-compose.override.yml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 密钥和证书
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+
+# 本地配置
+local_settings.py
+secrets.json
+
+# 缓存
+.cache/
+*.cache
+
+# 临时文件
+*.tmp
+*.temp

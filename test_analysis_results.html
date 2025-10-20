@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI分析结果测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; }
+        .error { background: #f8d7da; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .btn { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>AI分析结果测试页面</h1>
+    
+    <div>
+        <button class="btn" onclick="login()">1. 登录</button>
+        <button class="btn" onclick="testAnalysis()">2. 测试分析</button>
+        <button class="btn" onclick="getResults()">3. 获取结果</button>
+        <button class="btn" onclick="getStats()">4. 获取统计</button>
+    </div>
+    
+    <div id="status">等待操作...</div>
+    <div id="results"></div>
+
+    <script>
+        let token = null;
+        const API_BASE = 'http://localhost:8000/api/v1';
+        
+        async function login() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: 'admin', password: 'admin123' })
+                });
+                
+                const data = await response.json();
+                if (data.access_token) {
+                    token = data.access_token;
+                    document.getElementById('status').innerHTML = '<div class="result success">登录成功！</div>';
+                } else {
+                    document.getElementById('status').innerHTML = '<div class="result error">登录失败: ' + JSON.stringify(data) + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('status').innerHTML = '<div class="result error">登录错误: ' + error.message + '</div>';
+            }
+        }
+        
+        async function testAnalysis() {
+            if (!token) {
+                alert('请先登录');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/analysis/21/analyze`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ batch_size: 3, force_reanalyze: false })
+                });
+                
+                const data = await response.json();
+                document.getElementById('status').innerHTML = '<div class="result success">分析完成: ' + JSON.stringify(data) + '</div>';
+            } catch (error) {
+                document.getElementById('status').innerHTML = '<div class="result error">分析错误: ' + error.message + '</div>';
+            }
+        }
+        
+        async function getResults() {
+            if (!token) {
+                alert('请先登录');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/analysis/21/analysis-results`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                
+                if (data.results && data.results.length > 0) {
+                    let html = '<h3>分析结果 (' + data.results.length + '条)</h3>';
+                    html += '<table><tr><th>材料ID</th><th>状态</th><th>预测价格区间</th><th>置信度</th><th>是否合理</th><th>分析模型</th></tr>';
+                    
+                    data.results.forEach(result => {
+                        html += `<tr>
+                            <td>${result.material_id}</td>
+                            <td>${result.status}</td>
+                            <td>${result.predicted_price_min} - ${result.predicted_price_max}</td>
+                            <td>${Math.round(result.confidence_score * 100)}%</td>
+                            <td>${result.is_reasonable ? '合理' : '不合理'}</td>
+                            <td>${result.analysis_model}</td>
+                        </tr>`;
+                    });
+                    html += '</table>';
+                    
+                    document.getElementById('results').innerHTML = html;
+                    document.getElementById('status').innerHTML = '<div class="result success">获取结果成功！</div>';
+                } else {
+                    document.getElementById('results').innerHTML = '没有找到分析结果';
+                    document.getElementById('status').innerHTML = '<div class="result error">没有结果数据</div>';
+                }
+            } catch (error) {
+                document.getElementById('status').innerHTML = '<div class="result error">获取结果错误: ' + error.message + '</div>';
+            }
+        }
+        
+        async function getStats() {
+            if (!token) {
+                alert('请先登录');
+                return;
+            }
+            
+            try {
+                // 直接查询分析结果，不使用统计接口（它有bug）
+                const response = await fetch(`${API_BASE}/analysis/21/analysis-results`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                
+                if (data.results) {
+                    const total = data.results.length;
+                    const completed = data.results.filter(r => r.status === 'completed').length;
+                    const reasonable = data.results.filter(r => r.is_reasonable === true).length;
+                    const unreasonable = data.results.filter(r => r.is_reasonable === false).length;
+                    
+                    let html = '<h3>统计信息</h3>';
+                    html += `<table>
+                        <tr><td>总材料数</td><td>${total}</td></tr>
+                        <tr><td>已分析</td><td>${completed}</td></tr>
+                        <tr><td>价格合理</td><td>${reasonable}</td></tr>
+                        <tr><td>价格不合理</td><td>${unreasonable}</td></tr>
+                    </table>`;
+                    
+                    document.getElementById('results').innerHTML = html;
+                    document.getElementById('status').innerHTML = '<div class="result success">获取统计成功！</div>';
+                }
+            } catch (error) {
+                document.getElementById('status').innerHTML = '<div class="result error">获取统计错误: ' + error.message + '</div>';
+            }
+        }
+    </script>
+</body>
+</html>
