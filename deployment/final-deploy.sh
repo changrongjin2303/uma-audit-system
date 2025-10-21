@@ -30,11 +30,14 @@ fi
 echo -e "${GREEN}✓ 文件检查完成${NC}\n"
 
 # 步骤2: 加载Docker镜像
-echo -e "${YELLOW}[2/5] 加载Docker镜像...${NC}"
+echo -e "${YELLOW}[2/5] 加载Docker镜像（这可能需要1-2分钟，请耐心等待）...${NC}"
 if docker images | grep -q "uma-audit5-backend"; then
     echo "镜像已存在，跳过加载"
 else
-    docker load -i uma-audit5-docker-images-20251020.tar.gz
+    echo "正在解压并加载镜像包（1.2GB），请稍候..."
+    # 忽略Mac文件属性警告，显示加载进度
+    docker load -i uma-audit5-docker-images-20251020.tar.gz 2>&1 | grep -v "xattr" || true
+    echo "镜像加载处理完成"
 fi
 echo -e "${GREEN}✓ 镜像加载完成${NC}\n"
 
