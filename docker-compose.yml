@@ -1,83 +1,80 @@
-# Docker方式启动（推荐，最简单）
+# 生产环境Docker Compose配置
+# 使用已构建的镜像，直接部署
+
+version: '3.8'
 
 services:
   # PostgreSQL数据库
   postgres:
-    image: postgres:14
-    container_name: uma_audit_db
+    image: postgres:15
+    container_name: uma_audit_postgres
     environment:
-      POSTGRES_DB: uma_audit
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-uma_audit}
+      POSTGRES_USER: ${POSTGRES_USER:-uma_audit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-uma_audit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - uma_network
 
   # Redis缓存
   redis:
-    image: redis:7-alpine
+    image: redis:7
     container_name: uma_audit_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - uma_network
 
   # 后端API服务
   backend:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
+    image: uma-audit5-backend:latest
     container_name: uma_audit_backend
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/uma_audit
-      - REDIS_URL=redis://redis:6379/0
-      - DEBUG=true
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-      # 挂载代码目录，实现热更新
-      - ./backend:/app
-      - ./backend/uploads:/app/uploads
-      - ./backend/logs:/app/logs
-    # 开发模式启动命令，支持自动重启
-    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-
-  # 前端Web服务（开发模式）
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: uma_audit_frontend
-    ports:
-      - "3000:3000"  # 开发服务器端口
-    depends_on:
-      - backend
-    environment:
-      - NODE_ENV=development
-      - DOCKER_ENV=true
-    volumes:
-      # 挂载代码目录，实现热更新
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
-      - ./frontend/package.json:/app/package.json
-      - ./frontend/vite.config.js:/app/vite.config.js
-      - ./frontend/index.html:/app/index.html
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - uma_network
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  uma_network:
+    driver: bridge
