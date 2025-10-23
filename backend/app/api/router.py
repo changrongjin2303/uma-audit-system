@@ -68,3 +68,12 @@ api_router.include_router(
 @api_router.get("/")
 async def root():
     return {"message": "造价材料审计系统 API v1.0"}
+
+@api_router.get("/health")
+async def health():
+    """API健康检查端点"""
+    return {
+        "status": "healthy",
+        "message": "API服务运行正常",
+        "version": "1.0.0"
+    }
