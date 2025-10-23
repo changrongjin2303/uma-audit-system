@@ -69,6 +69,18 @@ services:
     restart: unless-stopped
     networks:
       - uma_network
+  # 前端服务
+  frontend:
+    image: uma-audit5-frontend:latest
+    container_name: uma_audit_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - uma_network
 
 volumes:
   postgres_data:
