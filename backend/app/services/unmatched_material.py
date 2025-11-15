@@ -300,7 +300,7 @@ class UnmatchedMaterialImportService:
                         'source': str(material_data.get('source', '导入数据')).strip(),
                         'source_url': str(material_data.get('source_url', '')).strip(),
                         'notes': str(material_data.get('notes', material_data.get('remarks', ''))).strip(),
-                        'is_verified': material_data.get('is_verified', True),
+                        'is_verified': material_data.get('is_verified', False),
                         'verification_notes': str(material_data.get('verification_notes', '')).strip(),
                     }
 

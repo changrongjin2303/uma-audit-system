@@ -1,0 +1,78 @@
+# 本地开发环境Docker Compose配置
+# 用于本地开发,支持代码热重载
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15
+    platform: linux/amd64
+    container_name: uma_audit_postgres_dev
+    environment:
+      POSTGRES_DB: uma_audit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - uma_network_dev
+
+  # Redis缓存
+  redis:
+    image: redis:7
+    platform: linux/amd64
+    container_name: uma_audit_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - uma_network_dev
+
+  # 后端API服务 - 开发模式
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    container_name: uma_audit_backend_dev
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/uma_audit
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - uma_network_dev
+    command: python main.py
+
+volumes:
+  postgres_data_dev:
+    driver: local
+  redis_data_dev:
+    driver: local
+
+networks:
+  uma_network_dev:
+    driver: bridge

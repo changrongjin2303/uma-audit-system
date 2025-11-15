@@ -112,11 +112,11 @@
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
-                  <el-form-item label="是否验证">
-                    <el-radio-group v-model="searchForm.verified">
+                  <el-form-item label="是否收藏">
+                    <el-radio-group v-model="searchForm.verified" @change="handleFilterChange">
                       <el-radio :label="null">全部</el-radio>
-                      <el-radio :label="true">已验证</el-radio>
-                      <el-radio :label="false">未验证</el-radio>
+                      <el-radio :label="true">已收藏</el-radio>
+                      <el-radio :label="false">未收藏</el-radio>
                     </el-radio-group>
                   </el-form-item>
                 </el-col>
@@ -138,14 +138,31 @@
         </div>
       </template>
 
+      <!-- 批量操作工具栏 -->
+      <div v-if="selectedMaterials.length > 0" class="batch-toolbar">
+        <el-tag type="info">已选择 {{ selectedMaterials.length }} 项</el-tag>
+        <el-button type="success" size="small" @click="batchFavorite(true)">
+          批量收藏
+        </el-button>
+        <el-button type="warning" size="small" @click="batchFavorite(false)">
+          批量取消收藏
+        </el-button>
+        <el-button type="info" size="small" @click="clearSelection">
+          清空选择
+        </el-button>
+      </div>
+
       <!-- 结果表格 -->
       <el-table
+        ref="tableRef"
         v-loading="loading"
         :data="materials"
         stripe
         style="width: 100%"
         max-height="500"
+        @selection-change="handleSelectionChange"
       >
+        <el-table-column type="selection" width="55" />
         <el-table-column prop="serial_number" label="序号" width="120" />
         <el-table-column prop="name" label="材料名称" min-width="200" show-overflow-tooltip />
         <el-table-column prop="specification" label="规格型号" width="150" show-overflow-tooltip />
@@ -166,10 +183,10 @@
             {{ row.date ? formatDate(row.date) : '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="is_verified" label="验证状态" width="100">
+        <el-table-column prop="is_verified" label="收藏状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.is_verified ? 'success' : 'warning'" size="small">
-              {{ row.is_verified ? '已验证' : '未验证' }}
+            <el-tag :type="row.is_verified ? 'success' : 'info'" size="small">
+              {{ row.is_verified ? '已收藏' : '未收藏' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -178,8 +195,13 @@
             <el-button type="primary" link size="small" @click="viewDetail(row)">
               查看
             </el-button>
-            <el-button type="success" link size="small" @click="addToProject(row)">
-              添加到项目
+            <el-button 
+              :type="row.is_verified ? 'warning' : 'success'" 
+              link 
+              size="small" 
+              @click="toggleFavorite(row)"
+            >
+              {{ row.is_verified ? '取消收藏' : '收藏' }}
             </el-button>
           </template>
         </el-table-column>
@@ -216,12 +238,15 @@ import {
   Refresh
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
-import { getUnmatchedMaterials } from '@/api/unmatchedMaterials'
+import { getUnmatchedMaterials, updateUnmatchedMaterial } from '@/api/unmatchedMaterials'
+import { ElMessageBox } from 'element-plus'
 
 // 响应式数据
 const loading = ref(false)
 const activeCollapse = ref(['advanced'])
 const materials = ref([])
+const selectedMaterials = ref([])
+const tableRef = ref()
 
 // 搜索表单
 const searchForm = reactive({
@@ -238,7 +263,7 @@ const searchForm = reactive({
 // 分页数据
 const pagination = reactive({
   page: 1,
-  size: 20,
+  size: 100,
   total: 0
 })
 
@@ -289,6 +314,12 @@ const resetFilters = () => {
   handleSearch()
 }
 
+// 筛选条件改变时的处理
+const handleFilterChange = () => {
+  pagination.page = 1
+  handleSearch()
+}
+
 // 导出结果
 const exportResults = () => {
   ElMessage.info('导出功能开发中...')
@@ -299,9 +330,93 @@ const viewDetail = (material) => {
   ElMessage.info(`查看材料详情: ${material.name}`)
 }
 
-// 添加到项目
-const addToProject = (material) => {
-  ElMessage.success(`材料 "${material.name}" 已添加到收藏`)
+// 选择变化处理
+const handleSelectionChange = (selection) => {
+  selectedMaterials.value = selection
+}
+
+// 清空选择
+const clearSelection = () => {
+  tableRef.value?.clearSelection()
+  selectedMaterials.value = []
+}
+
+// 切换收藏状态
+const toggleFavorite = async (material) => {
+  try {
+    const isCurrentlyFavorite = material.is_verified
+    const newFavoriteStatus = !isCurrentlyFavorite
+    
+    // 更新材料收藏状态
+    await updateUnmatchedMaterial(material.id, {
+      is_verified: newFavoriteStatus
+    })
+    
+    // 更新本地数据
+    material.is_verified = newFavoriteStatus
+    
+    if (newFavoriteStatus) {
+      ElMessage.success(`材料 "${material.name}" 已添加到收藏`)
+    } else {
+      ElMessage.success(`材料 "${material.name}" 已取消收藏`)
+    }
+  } catch (error) {
+    console.error('操作失败:', error)
+    ElMessage.error('操作失败: ' + (error.message || '未知错误'))
+  }
+}
+
+// 批量收藏/取消收藏
+const batchFavorite = async (favorite) => {
+  if (selectedMaterials.value.length === 0) {
+    ElMessage.warning('请先选择要操作的材料')
+    return
+  }
+
+  try {
+    const action = favorite ? '收藏' : '取消收藏'
+    await ElMessageBox.confirm(
+      `确定要${action}选中的 ${selectedMaterials.value.length} 个材料吗？`,
+      `批量${action}`,
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+
+    loading.value = true
+    const materialIds = selectedMaterials.value.map(m => m.id)
+    
+    // 批量更新
+    const updatePromises = materialIds.map(id => 
+      updateUnmatchedMaterial(id, { is_verified: favorite })
+    )
+    
+    await Promise.all(updatePromises)
+    
+    // 更新本地数据
+    selectedMaterials.value.forEach(material => {
+      material.is_verified = favorite
+    })
+    
+    // 清空选择
+    clearSelection()
+    
+    ElMessage.success(`成功${action} ${materialIds.length} 个材料`)
+    
+    // 如果当前筛选的是收藏状态，刷新数据
+    if (searchForm.verified !== null) {
+      handleSearch()
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('批量操作失败:', error)
+      ElMessage.error('批量操作失败: ' + (error.message || '未知错误'))
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
 // 分页处理
@@ -386,6 +501,15 @@ onMounted(() => {
     display: flex;
     justify-content: space-between;
     align-items: center;
+  }
+
+  .batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #ebeef5;
   }
 
   .pagination-wrapper {

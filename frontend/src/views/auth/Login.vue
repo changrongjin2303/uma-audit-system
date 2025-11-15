@@ -150,9 +150,9 @@ const handleLogin = () => {
         })
         
         ElMessage.success('登录成功')
-        
+
         // 登录成功后跳转
-        const redirect = route.query.redirect || '/dashboard'
+        const redirect = route.query.redirect || '/home/dashboard'
         router.push(redirect)
         
       } catch (error) {

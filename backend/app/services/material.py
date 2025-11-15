@@ -704,7 +704,7 @@ class MaterialImportService:
                     material_data.setdefault('category', '其他')
                     material_data.setdefault('region', '全国')
                     material_data.setdefault('source', '导入数据')
-                    material_data.setdefault('is_verified', True)
+                    material_data.setdefault('is_verified', False)
                     
                     # 设置必填的日期字段
                     from datetime import datetime
@@ -715,18 +715,26 @@ class MaterialImportService:
                 except Exception as e:
                     errors.append(f"第{idx+1}行: 数据处理错误 - {str(e)}")
             
-            # 检查重复材料（根据选项）- 使用高性能批量检查（基于材料编码+名称+规格+备注+地区）
+            # 检查重复材料（根据选项）- 使用高性能批量检查（基于材料编码+名称+规格+备注+地区+信息价期数）
             if import_options.get('skip_duplicate', True):
                 unique_materials = []
                 
-                # 批量检查重复材料，基于材料编码+名称+规格+备注+地区
+                # 批量检查重复材料，基于材料编码+名称+规格+备注+地区+信息价期数
                 existing_materials = await self._batch_check_materials_exist(
                     db, processed_materials
                 )
                 
                 for material in processed_materials:
-                    # 使用材料编码+材料名称+规格型号+备注+地区作为重复判断依据
-                    material_key = f"{material.get('material_code', '')}|{material['name']}|{material.get('specification', '')}|{material.get('verification_notes', '')}|{material.get('region', '')}"
+                    # 使用材料编码+材料名称+规格型号+备注+地区+信息价期数作为重复判断依据
+                    material_key = (
+                        f"{material.get('material_code', '')}|"
+                        f"{material['name']}|"
+                        f"{material.get('specification', '')}|"
+                        f"{material.get('verification_notes', '')}|"
+                        f"{material.get('region', '')}|"
+                        f"{material.get('price_type', '')}|"
+                        f"{material.get('price_date', '')}"
+                    )
                     if material_key not in existing_materials:
                         unique_materials.append(material)
                     else:
@@ -842,7 +850,7 @@ class MaterialImportService:
                         'price_type': str(material_data.get('price_type', '')).strip(),
                         'price_date': str(material_data.get('price_date', '')).strip(),
                         'price_source': str(material_data.get('price_source', '')).strip(),
-                        'is_verified': material_data.get('is_verified', True),
+                        'is_verified': material_data.get('is_verified', False),
                         'verification_notes': str(material_data.get('remarks', material_data.get('verification_notes', ''))).strip(),
                     }
                     
@@ -855,18 +863,26 @@ class MaterialImportService:
                 except Exception as e:
                     errors.append(f"第{idx+1}行: 数据处理错误 - {str(e)}")
             
-            # 检查重复材料（根据选项）- 使用高性能批量检查（基于材料编码+名称+规格+备注+地区）
+            # 检查重复材料（根据选项）- 使用高性能批量检查（基于材料编码+名称+规格+备注+地区+信息价期数）
             if import_options.get('skip_duplicate', True):
                 unique_materials = []
                 
-                # 批量检查重复材料，基于材料编码+名称+规格+备注+地区
+                # 批量检查重复材料，基于材料编码+名称+规格+备注+地区+信息价期数
                 existing_materials = await self._batch_check_materials_exist(
                     db, processed_materials
                 )
                 
                 for material in processed_materials:
-                    # 使用材料编码+材料名称+规格型号+备注+地区作为重复判断依据
-                    material_key = f"{material.get('material_code', '')}|{material['name']}|{material.get('specification', '')}|{material.get('verification_notes', '')}|{material.get('region', '')}"
+                    # 使用材料编码+材料名称+规格型号+备注+地区+信息价期数作为重复判断依据
+                    material_key = (
+                        f"{material.get('material_code', '')}|"
+                        f"{material['name']}|"
+                        f"{material.get('specification', '')}|"
+                        f"{material.get('verification_notes', '')}|"
+                        f"{material.get('region', '')}|"
+                        f"{material.get('price_type', '')}|"
+                        f"{material.get('price_date', '')}"
+                    )
                     if material_key not in existing_materials:
                         unique_materials.append(material)
                     else:
@@ -951,7 +967,7 @@ class MaterialImportService:
         db: AsyncSession, 
         materials: List[Dict[str, Any]]
     ) -> Set[str]:
-        """批量检查材料是否已存在，返回存在的材料键集合（基于材料编码+名称+规格+备注+地区）"""
+        """批量检查材料是否已存在，返回存在的材料键集合（基于材料编码+名称+规格+备注+地区+信息价期数）"""
         if not materials:
             return set()
         
@@ -965,7 +981,12 @@ class MaterialImportService:
             specification = material.get('specification', '')
             verification_notes = material.get('verification_notes', '')
             region = material.get('region', '')
-            material_key = f"{material_code}|{name}|{specification}|{verification_notes}|{region}"
+            price_type = material.get('price_type') or None
+            price_date = material.get('price_date') or None
+            material_key = (
+                f"{material_code}|{name}|{specification}|{verification_notes}|"
+                f"{region}|{price_type or ''}|{price_date or ''}"
+            )
             material_keys.add(material_key)
 
             conditions.append(
@@ -974,7 +995,9 @@ class MaterialImportService:
                     BaseMaterial.name == name,
                     BaseMaterial.specification == specification,
                     BaseMaterial.verification_notes == verification_notes,
-                    BaseMaterial.region == region
+                    BaseMaterial.region == region,
+                    BaseMaterial.price_type.is_(None) if price_type is None else BaseMaterial.price_type == price_type,
+                    BaseMaterial.price_date.is_(None) if price_date is None else BaseMaterial.price_date == price_date
                 )
             )
         
@@ -984,13 +1007,25 @@ class MaterialImportService:
         
         for i in range(0, len(conditions), batch_size):
             batch_conditions = conditions[i:i + batch_size]
-            stmt = select(BaseMaterial.material_code, BaseMaterial.name, BaseMaterial.specification, BaseMaterial.verification_notes, BaseMaterial.region).where(
+            stmt = select(
+                BaseMaterial.material_code,
+                BaseMaterial.name,
+                BaseMaterial.specification,
+                BaseMaterial.verification_notes,
+                BaseMaterial.region,
+                BaseMaterial.price_type,
+                BaseMaterial.price_date
+            ).where(
                 or_(*batch_conditions)
             )
 
             result = await db.execute(stmt)
             for row in result:
-                existing_key = f"{row.material_code or ''}|{row.name}|{row.specification or ''}|{row.verification_notes or ''}|{row.region or ''}"
+                existing_key = (
+                    f"{row.material_code or ''}|{row.name}|{row.specification or ''}|"
+                    f"{row.verification_notes or ''}|{row.region or ''}|"
+                    f"{row.price_type or ''}|{row.price_date or ''}"
+                )
                 existing_materials.add(existing_key)
         
         return existing_materials

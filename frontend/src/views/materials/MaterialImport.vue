@@ -106,18 +106,7 @@
                 </el-form-item>
               </el-col>
               
-              <el-col :span="8">
-                <el-form-item label="适用期数" required>
-                  <el-date-picker
-                    v-model="priceTypeForm.priceDate"
-                    type="month"
-                    placeholder="请选择期数（年月）"
-                    format="YYYY年MM月"
-                    value-format="YYYY-MM"
-                    style="width: 100%"
-                  />
-                </el-form-item>
-              </el-col>
+              <!-- 期数选择已移除，将在文件结构分析步骤中根据工作表名称自动识别 -->
             </el-row>
             
             <div class="selection-summary" v-if="isSelectionComplete">
@@ -214,18 +203,47 @@
                 </div>
               </div>
 
-              <!-- 工作表选择 -->
+              <!-- 工作表选择（多选） -->
               <div v-if="analysisResult.sheets.length > 1" class="sheet-selection">
-                <h4>请选择要导入的工作表:</h4>
-                <el-radio-group v-model="selectedSheet">
-                  <el-radio
+                <h4>请选择要导入的工作表（可多选）:</h4>
+                <div class="sheet-checkbox-group">
+                  <el-checkbox-group v-model="selectedSheets">
+                    <el-checkbox
                     v-for="sheet in analysisResult.sheets"
                     :key="sheet.name"
                     :label="sheet.name"
-                  >
-                    {{ sheet.name }} ({{ analysisResult.totalRows || sheet.rows }}行, {{ sheet.columns }}列)
-                  </el-radio>
-                </el-radio-group>
+                      class="sheet-checkbox"
+                    >
+                      <div class="sheet-info">
+                        <span class="sheet-name">{{ sheet.name }}</span>
+                        <span class="sheet-period" v-if="getSheetPeriod(sheet.name)">
+                          (期数: {{ getSheetPeriod(sheet.name) }})
+                        </span>
+                        <span class="sheet-stats">
+                          ({{ analysisResult.totalRows || sheet.rows }}行, {{ sheet.columns }}列)
+                        </span>
+                      </div>
+                    </el-checkbox>
+                  </el-checkbox-group>
+                </div>
+                <el-alert
+                  v-if="selectedSheets.length > 0"
+                  :title="`已选择 ${selectedSheets.length} 个工作表，系统将根据工作表名称自动识别期数`"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                  style="margin-top: 10px;"
+                />
+              </div>
+              <!-- 单个工作表时自动选中 -->
+              <div v-else-if="analysisResult.sheets.length === 1" class="sheet-selection">
+                <h4>检测到单个工作表:</h4>
+                <el-alert
+                  :title="`工作表: ${analysisResult.sheets[0].name}${getSheetPeriod(analysisResult.sheets[0].name) ? ' (期数: ' + getSheetPeriod(analysisResult.sheets[0].name) + ')' : ''}`"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                />
               </div>
 
               <!-- 表头检测信息 -->
@@ -579,13 +597,12 @@
                     <div class="stat-number">{{ importResult.successCount }}</div>
                     <div class="stat-label">成功导入</div>
                   </div>
-                  <div class="stat-card warning">
-                    <div class="stat-number">{{ importResult.skippedCount }}</div>
-                    <div class="stat-label">跳过数据</div>
-                  </div>
-                  <div class="stat-card danger">
+                  <div class="stat-card danger" :class="{ 'clickable': importResult.failedCount > 0 && importResult.errors && importResult.errors.length > 0 }" @click="showErrorDetails">
                     <div class="stat-number">{{ importResult.failedCount }}</div>
                     <div class="stat-label">导入失败</div>
+                    <div v-if="importResult.failedCount > 0 && importResult.errors && importResult.errors.length > 0" class="stat-hint">
+                      点击查看详情
+                    </div>
                   </div>
                 </div>
 
@@ -631,6 +648,46 @@
         开始导入 ({{ getImportCount() }} 条)
       </el-button>
     </div>
+
+    <!-- 错误详情对话框 -->
+    <el-dialog v-model="showErrorDialog" title="导入错误详情" width="800px">
+      <div class="error-details">
+        <el-alert
+          type="error"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 20px;"
+        >
+          <template #title>
+            共发现 {{ importResult.errors?.length || 0 }} 条错误信息
+          </template>
+        </el-alert>
+        
+        <div class="error-list">
+          <el-scrollbar max-height="400px">
+            <div
+              v-for="(error, index) in importResult.errors"
+              :key="index"
+              class="error-item"
+            >
+              <el-icon class="error-icon"><WarningFilled /></el-icon>
+              <span class="error-text">{{ error }}</span>
+            </div>
+          </el-scrollbar>
+        </div>
+        
+        <div v-if="!importResult.errors || importResult.errors.length === 0" class="no-errors">
+          <el-empty description="暂无详细错误信息" />
+        </div>
+      </div>
+      
+      <template #footer>
+        <el-button @click="showErrorDialog = false">关闭</el-button>
+        <el-button type="primary" @click="downloadErrorReport" v-if="importResult.errors && importResult.errors.length > 0">
+          导出错误报告
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 模板预览对话框 -->
     <el-dialog v-model="showTemplatePreview" title="Excel模板说明" width="800px">
@@ -693,7 +750,8 @@ import {
   Tools,
   Loading,
   Location,
-  InfoFilled
+  InfoFilled,
+  WarningFilled
 } from '@element-plus/icons-vue'
 import { formatNumber } from '@/utils'
 // 使用基准材料的API函数
@@ -713,11 +771,13 @@ const analyzing = ref(false)
 const importing = ref(false)
 const downloading = ref(false)
 const showTemplatePreview = ref(false)
+const showErrorDialog = ref(false)
 const uploadRef = ref()
 
 const fileList = ref([])
 const analysisResult = ref(null)
-const selectedSheet = ref('')
+const selectedSheet = ref('') // 保留用于兼容单工作表场景
+const selectedSheets = ref([]) // 多工作表选择
 const availableColumns = ref([])
 const previewData = ref([])
 const previewFilter = ref('all')
@@ -818,8 +878,37 @@ const currentCityOptions = computed(() => {
 })
 
 // 检查选择是否完整
+// 从工作表名称提取期数（支持多种格式：2025-01, 2025年01月, 202501等）
+const getSheetPeriod = (sheetName) => {
+  if (!sheetName) return null
+  
+  // 尝试匹配 YYYY-MM 格式（如：2025-01）
+  const match1 = sheetName.match(/(\d{4})-(\d{1,2})/)
+  if (match1) {
+    const year = match1[1]
+    const month = match1[2].padStart(2, '0')
+    return `${year}-${month}`
+  }
+  
+  // 尝试匹配 YYYY年MM月 格式（如：2025年01月）
+  const match2 = sheetName.match(/(\d{4})年(\d{1,2})月/)
+  if (match2) {
+    const year = match2[1]
+    const month = match2[2].padStart(2, '0')
+    return `${year}-${month}`
+  }
+  
+  // 尝试匹配 YYYYMM 格式（如：202501）
+  const match3 = sheetName.match(/(\d{4})(\d{2})/)
+  if (match3 && match3[1] >= '2000' && match3[1] <= '2099' && match3[2] >= '01' && match3[2] <= '12') {
+    return `${match3[1]}-${match3[2]}`
+  }
+  
+  return null
+}
+
 const isSelectionComplete = computed(() => {
-  if (!priceTypeForm.priceType || !priceTypeForm.province || !priceTypeForm.priceDate) {
+  if (!priceTypeForm.priceType || !priceTypeForm.province) {
     return false
   }
   
@@ -828,6 +917,7 @@ const isSelectionComplete = computed(() => {
     return !!priceTypeForm.city
   }
   
+  // 期数不再需要在这里选择，将从工作表名称自动识别
   return true
 })
 
@@ -842,7 +932,8 @@ const getSelectionSummary = () => {
     regionText = `${provinceName} - ${cityName}`
   }
   
-  return `已选择: ${typeText} - ${regionText} - ${priceTypeForm.priceDate}`
+  // 期数将在文件结构分析步骤中根据工作表名称自动识别
+  return `已选择: ${typeText} - ${regionText}（期数将从工作表名称自动识别）`
 }
 
 // 字段映射配置 - 适配基准材料字段
@@ -971,11 +1062,12 @@ const calculateFullDataStats = () => {
     // 验证数据有效性
     const isValid = name.trim() !== '' && unit.trim() !== '' && price_excluding_tax > 0 && !isNaN(price_excluding_tax)
     
-    // 生成重复检测键（基于材料编码 + 材料名称 + 规格型号 + 备注 + 地区的组合）
+    // 生成重复检测键（基于材料编码 + 材料名称 + 规格型号 + 备注 + 地区 + 期数的组合）
     const materialCode = getValue('material_code') || ''
     const notes = getValue('verification_notes') || ''
     const region = getValue('region') || ''
-    const duplicateKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${notes.trim()}_${region.trim()}`.toLowerCase()
+    const period = row._period || getSheetPeriod(row._sheetName) || ''
+    const duplicateKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${notes.trim()}_${region.trim()}_${period.trim()}`.toLowerCase()
     
     const itemData = {
       index: i,
@@ -1106,12 +1198,15 @@ const processFullDataWithMapping = (sourceData) => {
       errors: []
     }
     
-    // 生成重复检测键（材料编码 + 材料名称 + 规格型号 + 备注 + 地区，五个字段确定唯一性）
+    // 生成重复检测键（材料编码 + 材料名称 + 规格型号 + 备注 + 地区 + 期数，六个字段确定唯一性）
     const materialCode = getValue('material_code') || '' // 材料编码
     const notes = getValue('verification_notes') || '' // 备注
     const region = getValue('region') || '' // 地区
-    const duplicateKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${notes.trim()}_${region.trim()}`.toLowerCase()
+    const period = row._period || getSheetPeriod(row._sheetName) || '' // 期数
+    const duplicateKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${notes.trim()}_${region.trim()}_${period.trim()}`.toLowerCase()
     item.duplicateKey = duplicateKey
+    item._period = period // 保存期数信息
+    item._sheetName = row._sheetName || '' // 保存工作表名称
     
     // 统计重复键出现次数
     if (name.trim()) {
@@ -1399,6 +1494,12 @@ const nextStep = async () => {
         await analyzeFile()
         break
       case 1:
+        // 检查是否选择了工作表
+        const sheetsToCheck = selectedSheets.value.length > 0 ? selectedSheets.value : [selectedSheet.value]
+        if (sheetsToCheck.length === 0 || (sheetsToCheck.length === 1 && !sheetsToCheck[0])) {
+          ElMessage.error('请先选择要导入的工作表')
+          return
+        }
         setupFieldMapping()
         break
       case 2:
@@ -1456,6 +1557,13 @@ const analyzeFile = async () => {
     analysisResult.value = data
     availableColumns.value = data.columns || []
     selectedSheet.value = data.sheets?.[0]?.name || 'Sheet1'
+    
+    // 自动选中所有工作表（用户可以在下一步取消选择）
+    if (data.sheets && data.sheets.length > 0) {
+      selectedSheets.value = data.sheets.map(s => s.name)
+    } else {
+      selectedSheets.value = [selectedSheet.value]
+    }
     
     ElMessage.success('文件分析完成')
   } catch (error) {
@@ -1637,6 +1745,13 @@ const previewFileData = async () => {
   try {
     console.log('开始数据预览...')
     
+    // 检查是否选择了工作表
+    const sheetsToProcess = selectedSheets.value.length > 0 ? selectedSheets.value : [selectedSheet.value]
+    if (sheetsToProcess.length === 0 || (sheetsToProcess.length === 1 && !sheetsToProcess[0])) {
+      ElMessage.error('请先选择要导入的工作表')
+      return
+    }
+    
     // 首先检查是否有解析结果可以回退使用
     let sourceData = null
     let useNewAPI = true
@@ -1654,22 +1769,46 @@ const previewFileData = async () => {
     if (useNewAPI) {
       try {
         const currentFile = fileList.value[0].raw || fileList.value[0]
-        console.log('尝试使用新API获取预览数据...', { file: currentFile, sheet: selectedSheet.value })
+        console.log('尝试使用新API获取预览数据...', { file: currentFile, sheets: sheetsToProcess })
         
+        // 支持多工作表：合并所有工作表的数据
+        const allPreviewData = []
+        const allFullData = []
+        
+        for (const sheetName of sheetsToProcess) {
         // 使用基准材料的预览API
         const response = await getPreviewData(currentFile, {
-          sheet_name: selectedSheet.value,
+            sheet_name: sheetName,
           max_rows: 2000  // 最多预览2000行
         })
         
         if (response.code === 200 && response.data) {
-          // 保存完整数据用于导入
-          fullImportData.value = response.data.fullData || response.data.previewData
-          sourceData = response.data.previewData  // 只用于预览显示
-          console.log('新API获取成功，预览数据:', sourceData.length, '行，完整数据:', fullImportData.value.length, '行')
+            const sheetPreviewData = response.data.previewData || []
+            const sheetFullData = response.data.fullData || response.data.previewData || []
+            
+            // 为每个数据项标记来源工作表
+            const period = getSheetPeriod(sheetName)
+            sheetPreviewData.forEach(item => {
+              item._sheetName = sheetName
+              item._period = period
+            })
+            sheetFullData.forEach(item => {
+              item._sheetName = sheetName
+              item._period = period
+            })
+            
+            allPreviewData.push(...sheetPreviewData)
+            allFullData.push(...sheetFullData)
+            console.log(`工作表 "${sheetName}" 获取成功，预览数据: ${sheetPreviewData.length} 行，完整数据: ${sheetFullData.length} 行${period ? ' (期数: ' + period + ')' : ''}`)
         } else {
-          throw new Error(response.message || '新API调用失败')
+            throw new Error(response.message || `获取工作表 "${sheetName}" 数据失败`)
+          }
         }
+        
+        // 合并所有工作表的数据
+        fullImportData.value = allFullData
+        sourceData = allPreviewData
+        console.log('多工作表数据合并完成，总预览数据:', sourceData.length, '行，总完整数据:', fullImportData.value.length, '行')
       } catch (apiError) {
         console.warn('新API调用失败，回退到使用分析结果:', apiError.message)
         if (analysisResult.value && analysisResult.value.sampleData) {
@@ -1747,14 +1886,17 @@ const previewFileData = async () => {
           errors: []
         }
         
-        // 生成重复检测键 - 基于材料编码 + 材料名称 + 规格型号 + 备注 + 地区
+        // 生成重复检测键 - 基于材料编码 + 材料名称 + 规格型号 + 备注 + 地区 + 期数
         const materialCode = getValue('material_code') || ''
         const notes = getValue('verification_notes') || ''
         const region = getValue('region') || ''
-        const baseKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${notes.trim()}_${region.trim()}`.toLowerCase()
+        const period = row._period || getSheetPeriod(row._sheetName) || '' // 期数
+        const baseKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${notes.trim()}_${region.trim()}_${period.trim()}`.toLowerCase()
         const duplicateKey = baseKey
         item.duplicateKey = duplicateKey
         item.baseKey = baseKey  // 保存基础键用于分析
+        item._period = period // 保存期数信息
+        item._sheetName = row._sheetName || '' // 保存工作表名称
         
         // 统计重复键出现次数
         if (name.trim()) {
@@ -1886,12 +2028,15 @@ const getImportCount = () => {
       item.valid = false
     }
     
-    // 生成重复检测键（材料编码 + 材料名称 + 规格型号 + 备注 + 地区，五个字段确定唯一性）
+    // 生成重复检测键（材料编码 + 材料名称 + 规格型号 + 备注 + 地区 + 期数，六个字段确定唯一性）
     const materialCode = getValue('material_code') || '' // 材料编码
     const notes = getValue('verification_notes') || '' // 备注
     const region = getValue('region') || '' // 地区
-    const duplicateKey = `${materialCode.trim()}_${item.name.trim()}_${item.specification.trim()}_${notes.trim()}_${region.trim()}`.toLowerCase()
+    const period = row._period || getSheetPeriod(row._sheetName) || '' // 期数
+    const duplicateKey = `${materialCode.trim()}_${item.name.trim()}_${item.specification.trim()}_${notes.trim()}_${region.trim()}_${period.trim()}`.toLowerCase()
     item.duplicateKey = duplicateKey
+    item._period = period // 保存期数信息
+    item._sheetName = row._sheetName || '' // 保存工作表名称
     
     if (item.name.trim()) {
       duplicateCheck.set(duplicateKey, (duplicateCheck.get(duplicateKey) || 0) + 1)
@@ -1966,6 +2111,9 @@ const startImport = async () => {
         }
       }
 
+      // 获取数据项的期数信息（从工作表名称提取）
+      const itemPeriod = row._period || getSheetPeriod(row._sheetName) || ''
+
       const item = {
         material_code: getValue('material_code') || '',
         name: getValue('name') || '',
@@ -1977,7 +2125,9 @@ const startImport = async () => {
         excel_region: getValue('region') || '', // 保存Excel中的原始地区信息
         remarks: getValue('remarks') || '',
         valid: true,
-        duplicate: false
+        duplicate: false,
+        _period: itemPeriod, // 保存期数信息
+        _sheetName: row._sheetName || '' // 保存工作表名称
       }
       
       // 数据验证
@@ -1994,11 +2144,12 @@ const startImport = async () => {
         item.valid = false
       }
       
-      // 生成重复检测键（材料编码 + 材料名称 + 规格型号 + 备注 + 地区，五个字段确定唯一性）
+      // 生成重复检测键（材料编码 + 材料名称 + 规格型号 + 备注 + 地区 + 期数，六个字段确定唯一性）
       const materialCode = item.material_code || ''
-      const notes = item.verification_notes || ''
+      const notes = item.verification_notes || item.remarks || ''
       const region = item.region || ''
-      const duplicateKey = `${materialCode.trim()}_${item.name.trim()}_${item.specification.trim()}_${notes.trim()}_${region.trim()}`.toLowerCase()
+      const period = itemPeriod || ''
+      const duplicateKey = `${materialCode.trim()}_${item.name.trim()}_${item.specification.trim()}_${notes.trim()}_${region.trim()}_${period.trim()}`.toLowerCase()
       item.duplicateKey = duplicateKey
       
       if (item.name.trim()) {
@@ -2029,6 +2180,9 @@ const startImport = async () => {
       // 确定适用地区：使用与预览和导入逻辑一致的地区信息
       const regionForImport = item.region // 使用前面已经处理好的地区信息
 
+      // 从数据项中获取期数（如果数据项标记了来源工作表）
+      const itemPeriod = item._period || getSheetPeriod(item._sheetName) || null
+
       // 准备基准材料数据结构
       const materialData = {
         material_code: item.material_code || '',
@@ -2045,7 +2199,7 @@ const startImport = async () => {
         is_verified: false,
         // 添加信息价相关字段
         price_type: priceTypeForm.priceType, // 'provincial' | 'municipal'
-        price_date: priceTypeForm.priceDate, // YYYY-MM
+        price_date: itemPeriod, // YYYY-MM，从工作表名称自动识别
         price_source: priceTypeForm.priceType === 'provincial' ? '省刊信息价' : '市刊信息价',
         // 添加详细的省份和城市信息
         province: priceTypeForm.province,
@@ -2071,6 +2225,12 @@ const startImport = async () => {
     }
     if (priceTypeForm.priceType === 'municipal' && !priceTypeForm.city) {
       throw new Error('选择市刊信息价时必须选择城市')
+    }
+    
+    // 检查是否有数据缺少期数（无法从工作表名称识别）
+    const materialsWithoutPeriod = materialsToImport.filter(m => !m.price_date)
+    if (materialsWithoutPeriod.length > 0) {
+      console.warn(`警告: 有 ${materialsWithoutPeriod.length} 条数据无法识别期数，这些数据将使用空期数`)
     }
     
     importProgress.message = '正在准备导入数据...'
@@ -2123,6 +2283,7 @@ const startImport = async () => {
     importResult.successCount = result.success_count || result.imported_count || 0
     importResult.failedCount = result.failed_count || 0
     importResult.skippedCount = result.skipped_count || 0
+    importResult.errors = result.errors || [] // 保存错误详情
     
     if (result.errors && result.errors.length > 0) {
       console.warn('导入警告信息:', result.errors)
@@ -2137,6 +2298,11 @@ const startImport = async () => {
     importResult.successCount = 0
     importResult.failedCount = previewData.value.length
     importResult.skippedCount = 0
+    // 保存错误信息
+    importResult.errors = [error.message || error.detail || '数据导入过程中出现错误']
+    if (error.response?.data?.detail) {
+      importResult.errors.push(error.response.data.detail)
+    }
   } finally {
     importing.value = false
   }
@@ -2252,7 +2418,10 @@ const resetPriceTypeForm = () => {
 const resetAnalysis = () => {
   analysisResult.value = null
   selectedSheet.value = ''
+  selectedSheets.value = []
   availableColumns.value = []
+  previewData.value = []
+  fullImportData.value = []
 }
 
 const resetMapping = () => {
@@ -2290,7 +2459,8 @@ const resetImport = () => {
     totalCount: 0,
     successCount: 0,
     failedCount: 0,
-    skippedCount: 0
+    skippedCount: 0,
+    errors: []
   })
 }
 
@@ -2306,6 +2476,52 @@ const downloadTemplate = async () => {
     ElMessage.error('下载模板失败，请稍后重试')
   } finally {
     downloading.value = false
+  }
+}
+
+// 显示错误详情
+const showErrorDetails = () => {
+  if (importResult.failedCount > 0 && importResult.errors && importResult.errors.length > 0) {
+    showErrorDialog.value = true
+  } else {
+    ElMessage.warning('暂无错误详情信息')
+  }
+}
+
+// 导出错误报告
+const downloadErrorReport = () => {
+  if (!importResult.errors || importResult.errors.length === 0) {
+    ElMessage.warning('没有错误信息可导出')
+    return
+  }
+  
+  try {
+    const errorContent = importResult.errors.map((error, index) => {
+      return `${index + 1}. ${error}`
+    }).join('\n')
+    
+    const reportContent = `导入错误报告\n` +
+      `生成时间: ${new Date().toLocaleString('zh-CN')}\n` +
+      `总数据量: ${importResult.totalCount}\n` +
+      `成功导入: ${importResult.successCount}\n` +
+      `导入失败: ${importResult.failedCount}\n` +
+      `跳过数量: ${importResult.skippedCount}\n\n` +
+      `错误详情:\n${errorContent}`
+    
+    const blob = new Blob([reportContent], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `导入错误报告_${new Date().toISOString().slice(0, 10)}.txt`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success('错误报告导出成功')
+  } catch (error) {
+    console.error('导出错误报告失败:', error)
+    ElMessage.error('导出错误报告失败')
   }
 }
 
@@ -2637,6 +2853,44 @@ onMounted(() => {
         font-size: 14px;
         margin-bottom: 12px;
       }
+      
+      .sheet-checkbox-group {
+        margin-top: 10px;
+        
+        .sheet-checkbox {
+          display: block;
+          margin-bottom: 10px;
+          padding: 8px;
+          border: 1px solid #e4e7ed;
+          border-radius: 4px;
+          transition: all 0.3s;
+          
+          &:hover {
+            background-color: #f5f7fa;
+            border-color: #409eff;
+          }
+          
+          .sheet-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            
+            .sheet-name {
+              font-weight: 500;
+            }
+            
+            .sheet-period {
+              color: #409eff;
+              font-weight: 500;
+            }
+            
+            .sheet-stats {
+              color: #909399;
+              font-size: 12px;
+            }
+          }
+        }
+      }
     }
 
     .header-detection-info {
@@ -2881,6 +3135,23 @@ onMounted(() => {
             color: #f56c6c;
           }
         }
+        
+        &.clickable {
+          cursor: pointer;
+          transition: all 0.3s;
+          
+          &:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 108, 108, 0.2);
+          }
+        }
+        
+        .stat-hint {
+          font-size: 11px;
+          color: #909399;
+          margin-top: 4px;
+          opacity: 0.8;
+        }
       }
     }
   }
@@ -2889,6 +3160,38 @@ onMounted(() => {
     display: flex;
     gap: 12px;
     justify-content: center;
+  }
+}
+
+.error-details {
+  .error-list {
+    .error-item {
+      display: flex;
+      align-items: flex-start;
+      padding: 12px;
+      margin-bottom: 8px;
+      background-color: #fef0f0;
+      border-left: 3px solid #f56c6c;
+      border-radius: 4px;
+      
+      .error-icon {
+        color: #f56c6c;
+        margin-right: 8px;
+        margin-top: 2px;
+        flex-shrink: 0;
+      }
+      
+      .error-text {
+        color: #606266;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+    }
+  }
+  
+  .no-errors {
+    text-align: center;
+    padding: 40px 0;
   }
 }
 
