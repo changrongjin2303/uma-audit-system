@@ -64,6 +64,10 @@ class BaseMaterialService:
                     )
                 )
             
+            # 规格型号单独过滤
+            if hasattr(search_params, 'specification') and search_params.specification:
+                conditions.append(BaseMaterial.specification.ilike(f"%{search_params.specification}%"))
+            
             # 分类过滤
             if search_params.category:
                 conditions.append(BaseMaterial.category == search_params.category)
@@ -145,6 +149,9 @@ class BaseMaterialService:
                         BaseMaterial.material_code.ilike(search_term)
                     )
                 )
+            
+            if hasattr(search_params, 'specification') and search_params.specification:
+                conditions.append(BaseMaterial.specification.ilike(f"%{search_params.specification}%"))
             
             if search_params.category:
                 conditions.append(BaseMaterial.category == search_params.category)

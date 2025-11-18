@@ -158,6 +158,9 @@
               <span class="file-name">{{ fileList[0].name }}</span>
               <span class="file-size">{{ formatFileSize(fileList[0].size) }}</span>
             </div>
+            <div class="file-actions">
+              <el-button type="danger" :icon="Delete" @click="removeSelectedFile">删除文件</el-button>
+            </div>
           </div>
 
           <!-- 模板下载 -->
@@ -751,7 +754,8 @@ import {
   Loading,
   Location,
   InfoFilled,
-  WarningFilled
+  WarningFilled,
+  Delete
 } from '@element-plus/icons-vue'
 import { formatNumber } from '@/utils'
 // 使用基准材料的API函数
@@ -1484,6 +1488,14 @@ const formatFileSize = (size) => {
   if (size < 1024) return size + ' B'
   if (size < 1024 * 1024) return (size / 1024).toFixed(2) + ' KB'
   return (size / (1024 * 1024)).toFixed(2) + ' MB'
+}
+
+const removeSelectedFile = () => {
+  try {
+    uploadRef.value?.clearFiles()
+  } catch (e) {}
+  fileList.value = []
+  resetAnalysis()
 }
 
 // 步骤控制方法
@@ -2762,6 +2774,12 @@ onMounted(() => {
       width: 100%;
       padding: 60px 20px;
     }
+    
+    :deep(.el-upload-list__item .el-icon-close) {
+      width: 22px;
+      height: 22px;
+      font-size: 18px;
+    }
   }
 
   .file-info {
@@ -2793,6 +2811,10 @@ onMounted(() => {
         font-size: 12px;
         color: #909399;
       }
+    }
+
+    .file-actions {
+      margin-top: 12px;
     }
   }
 

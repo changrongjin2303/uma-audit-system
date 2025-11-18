@@ -1,8 +1,8 @@
 import { request } from '@/utils/request'
 
 // 获取基准材料列表
-export function getBaseMaterials(params) {
-  return request.get('/base-materials/', params)
+export function getBaseMaterials(params, config = {}) {
+  return request.get('/base-materials/', params, config)
 }
 
 // 获取基准材料详情
@@ -120,9 +120,9 @@ export function getMaterialCategories() {
 }
 
 // 获取地区选项
-export function getRegions(priceType) {
+export function getRegions(priceType, config = {}) {
   const params = priceType ? { price_type: priceType } : {}
-  return request.get('/base-materials/regions/list', params)
+  return request.get('/base-materials/regions/list', params, config)
 }
 
 // 获取数据来源选项
@@ -218,6 +218,13 @@ export function getMaterialRecommendations(params) {
 // 标记材料为常用
 export function markMaterialAsFavorite(materialId) {
   return request.post(`/base-materials/${materialId}/favorite`)
+}
+
+export function searchSimilarBaseMaterials(materialName, limit = 50) {
+  return request.get('/base-materials/search-similar', {
+    material_name: materialName,
+    limit
+  })
 }
 
 // 取消材料常用标记

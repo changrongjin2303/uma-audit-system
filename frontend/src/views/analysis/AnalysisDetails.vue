@@ -203,7 +203,7 @@
       </div>
 
       <!-- 无信息价材料分析结果表格 -->
-      <div v-if="activeAnalysisType === 'unpriced' && analysisResults.length > 0" class="table-container">
+      <div v-show="activeAnalysisType === 'unpriced' && analysisResults.length > 0" class="table-container">
         <div class="table-wrapper">
           <el-table
             ref="tableRef"
@@ -360,7 +360,7 @@
       </div>
 
       <!-- 市场信息价材料分析结果表格 -->
-      <div v-if="activeAnalysisType === 'priced' && pricedAnalysisResults.length > 0" class="table-container">
+      <div v-show="activeAnalysisType === 'priced' && pricedAnalysisResults.length > 0" class="table-container">
         <div class="table-wrapper">
           <el-table
             ref="pricedTableRef"
@@ -481,7 +481,7 @@
       
       <!-- 空状态 -->
       <el-empty 
-        v-else-if="(activeAnalysisType === 'unpriced' && analysisResults.length === 0) || (activeAnalysisType === 'priced' && pricedAnalysisResults.length === 0)" 
+        v-if="(activeAnalysisType === 'unpriced' && analysisResults.length === 0) || (activeAnalysisType === 'priced' && pricedAnalysisResults.length === 0)" 
         :description="getEmptyStateDescription()"
         :image-size="120"
       >
@@ -846,6 +846,10 @@ const showAdjustDialog = ref(false)
 const showAnalysisDetailDialog = ref(false)
 const selectedMaterialId = ref(null)
 
+// 缓存加载状态，避免切换频繁重新请求导致闪烁
+const hasLoadedUnpriced = ref(false)
+const hasLoadedPriced = ref(false)
+
 const currentProject = ref(null)
 const filterStatus = ref('')
 const filterRisk = ref('')
@@ -1025,7 +1029,7 @@ const fetchAnalysisResults = async () => {
         ...baseParams,
         skip: offset,
         limit: chunkSize
-      })
+      }, { __skipLoading: true })
 
       const items = response?.results || []
       if (!items.length) {
@@ -1118,7 +1122,7 @@ const fetchAnalysisResults = async () => {
     syncSelectionOnPage(tableRef, analysisResults.value)
 
     try {
-      const stats = await getProjectAnalysisStatistics(route.query.project_id)
+      const stats = await getProjectAnalysisStatistics(route.query.project_id, { __skipLoading: true })
       Object.assign(analysisStats, {
         totalMaterials: stats.total_materials ?? analysisStats.totalMaterials,
         analyzedMaterials: stats.analyzed_materials ?? analysisStats.analyzedMaterials,
@@ -1146,6 +1150,7 @@ const fetchAnalysisResults = async () => {
     console.error('获取分析结果失败:', error)
   } finally {
     loading.value = false
+    hasLoadedUnpriced.value = true
   }
 }
 
@@ -1503,22 +1508,24 @@ const switchAnalysisType = async (type) => {
   activeAnalysisType.value = type
   
   if (type === 'priced') {
-    // 加载市场信息价材料分析结果
-    await fetchPricedAnalysisResults()
+    if (!hasLoadedPriced.value) {
+      await fetchPricedAnalysisResults()
+    }
   } else {
-    // 加载无信息价材料分析结果（原有逻辑）
-    await fetchAnalysisResults()
+    if (!hasLoadedUnpriced.value) {
+      await fetchAnalysisResults()
+    }
   }
 }
 
 // 获取市场信息价材料分析结果
-const fetchPricedAnalysisResults = async () => {
+const fetchPricedAnalysisResults = async (silent = false) => {
   if (!route.query.project_id) {
     console.warn('没有项目ID，无法获取市场信息价材料分析结果')
     return
   }
 
-  loading.value = true
+  if (!silent) loading.value = true
   try {
     console.log('开始获取市场信息价材料分析结果，项目ID:', route.query.project_id)
     
@@ -1526,7 +1533,7 @@ const fetchPricedAnalysisResults = async () => {
     const response = await getProjectPricedMaterialsAnalysis(route.query.project_id, {
       skip: (pricedPagination.page - 1) * pricedPagination.size,
       limit: pricedPagination.size
-    })
+    }, { __skipLoading: true })
     
     console.log('市场信息价材料分析API响应:', response)
     
@@ -1564,6 +1571,7 @@ const fetchPricedAnalysisResults = async () => {
     }
     
     console.log('市场信息价材料分析结果获取成功:', pricedAnalysisResults.value.length, '条数据')
+    hasLoadedPriced.value = true
     
   } catch (error) {
     console.error('获取市场信息价材料分析结果失败:', error)
@@ -1573,7 +1581,7 @@ const fetchPricedAnalysisResults = async () => {
     pricedAnalysisResults.value = []
     pricedPagination.total = 0
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -1728,7 +1736,7 @@ const batchReanalyze = async () => {
           limit: size,
           status: filterStatus.value || undefined,
           is_reasonable: filterRisk.value ? (filterRisk.value === 'normal') : undefined
-        })
+        }, { __skipLoading: true })
         const list = resp?.results || []
         list
           .filter(item => !isGuidedPriceAnalysis(item))
@@ -1774,7 +1782,7 @@ const batchDeleteAnalyses = async () => {
           limit: size,
           status: filterStatus.value || undefined,
           is_reasonable: filterRisk.value ? (filterRisk.value === 'normal') : undefined
-        })
+        }, { __skipLoading: true })
         const list = resp?.results || []
         list
           .filter(item => !isGuidedPriceAnalysis(item))
@@ -1808,6 +1816,8 @@ onMounted(async () => {
   } else {
     activeAnalysisType.value = 'unpriced'
     await fetchAnalysisResults()
+    // 背景预取市场信息价分析结果，避免第一次切换时闪烁
+    fetchPricedAnalysisResults(true)
   }
   
   // 设置当前项目信息，可以从路由参数或API获取

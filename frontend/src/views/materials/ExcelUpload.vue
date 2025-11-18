@@ -21,21 +21,44 @@
       <div class="search-section">
         <h3>查询条件</h3>
         
-        <!-- 基础搜索 -->
-        <div class="basic-search">
+        <div class="basic-search" style="gap:12px;">
+          <span style="color:#666;min-width:80px;">材料名称</span>
           <el-input
-            v-model="searchForm.keyword"
-            placeholder="输入材料名称、规格、编码等关键词"
+            v-model="searchForm.name"
+            placeholder="材料名称"
             clearable
             size="large"
             :prefix-icon="Search"
             @keyup.enter="handleSearch"
-            class="search-input"
-          >
-            <template #append>
-              <el-button :icon="Search" @click="handleSearch">搜索</el-button>
-            </template>
-          </el-input>
+            style="max-width: 300px;"
+          />
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="color:#666;min-width:80px;">规格型号</span>
+            <el-select
+              v-model="searchForm.specification"
+              filterable
+              allow-create
+              default-first-option
+              clearable
+              placeholder="规格型号"
+              :loading="loadingSpecs"
+              size="large"
+              style="width: 300px;"
+            >
+              <el-option
+                v-for="spec in specOptions"
+                :key="spec"
+                :label="spec"
+                :value="spec"
+              />
+              <template #empty>
+                <div style="padding: 8px 12px; color: #909399;">暂无规格，可调整材料名称或点击“匹配型号”</div>
+              </template>
+            </el-select>
+            <el-button :icon="Search" size="large" @click="fetchSpecOptions">匹配型号</el-button>
+          </div>
+          <el-button :icon="Search" size="large" @click="handleSearch">搜索</el-button>
+          <el-button :icon="Refresh" class="reset-btn" size="large" @click="resetFilters">重置</el-button>
         </div>
 
         <!-- 高级筛选 -->
@@ -44,70 +67,37 @@
             <el-form :model="searchForm" label-width="100px" class="filter-form">
               <el-row :gutter="20">
                 <el-col :span="8">
-                  <el-form-item label="材料分类">
-                    <el-select v-model="searchForm.category" placeholder="选择分类" clearable>
-                      <el-option label="建筑材料" value="building" />
-                      <el-option label="装饰材料" value="decoration" />
-                      <el-option label="机械设备" value="machinery" />
-                      <el-option label="人工费" value="labor" />
-                      <el-option label="其他" value="other" />
+                  <el-form-item label="期刊类型">
+                    <el-select v-model="searchForm.price_type" placeholder="选择期刊类型" clearable>
+                      <el-option label="省刊" value="provincial" />
+                      <el-option label="市刊" value="municipal" />
                     </el-select>
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
                   <el-form-item label="适用地区">
                     <el-select v-model="searchForm.region" placeholder="选择地区" clearable>
-                      <el-option label="北京" value="beijing" />
-                      <el-option label="上海" value="shanghai" />
-                      <el-option label="广州" value="guangzhou" />
-                      <el-option label="深圳" value="shenzhen" />
-                      <el-option label="杭州" value="hangzhou" />
-                      <el-option label="全国" value="national" />
+                      <el-option
+                        v-for="region in availableRegions"
+                        :key="region.value"
+                        :label="region.label"
+                        :value="region.value"
+                      />
                     </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="8">
-                  <el-form-item label="价格范围">
-                    <el-input-number
-                      v-model="searchForm.priceMin"
-                      placeholder="最低价"
-                      :min="0"
-                      :precision="2"
-                      controls-position="right"
-                    />
-                    <span style="margin: 0 8px;">-</span>
-                    <el-input-number
-                      v-model="searchForm.priceMax"
-                      placeholder="最高价"
-                      :min="0"
-                      :precision="2"
-                      controls-position="right"
-                    />
                   </el-form-item>
                 </el-col>
               </el-row>
               
               <el-row :gutter="20">
                 <el-col :span="8">
-                  <el-form-item label="数据来源">
-                    <el-select v-model="searchForm.source" placeholder="选择来源" clearable>
-                      <el-option label="政府信息价" value="government" />
-                      <el-option label="市场调研" value="market" />
-                      <el-option label="供应商报价" value="supplier" />
-                      <el-option label="历史数据" value="historical" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="8">
-                  <el-form-item label="生效时间">
+                  <el-form-item label="期数">
                     <el-date-picker
-                      v-model="searchForm.dateRange"
-                      type="daterange"
-                      range-separator="至"
-                      start-placeholder="开始日期"
-                      end-placeholder="结束日期"
-                      format="YYYY-MM-DD"
-                      value-format="YYYY-MM-DD"
+                      v-model="searchForm.price_date"
+                      type="month"
+                      placeholder="选择期数"
+                      value-format="YYYY-MM"
+                      style="width: 100%"
+                      clearable
                     />
                   </el-form-item>
                 </el-col>
@@ -182,9 +172,9 @@
             {{ getRegionText(row.region) }}
           </template>
         </el-table-column>
-        <el-table-column prop="effective_date" label="生效日期" width="110">
+        <el-table-column prop="issue_period" label="期数" width="110">
           <template #default="{ row }">
-            {{ formatDate(row.effective_date) }}
+            {{ getPeriodText(row) }}
           </template>
         </el-table-column>
         <el-table-column prop="is_verified" label="收藏状态" width="100">
@@ -234,7 +224,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Search,
@@ -242,7 +232,7 @@ import {
   Refresh
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
-import { getBaseMaterials, updateBaseMaterial } from '@/api/materials'
+import { getBaseMaterials, updateBaseMaterial, getRegions } from '@/api/materials'
 import { ElMessageBox } from 'element-plus'
 
 // 响应式数据
@@ -254,15 +244,15 @@ const tableRef = ref()
 
 // 搜索表单
 const searchForm = reactive({
-  keyword: '',
-  category: '',
+  name: '',
+  specification: '',
+  price_type: '',
   region: '',
-  priceMin: null,
-  priceMax: null,
-  source: '',
-  dateRange: null,
+  price_date: '',
   verified: null
 })
+
+const availableRegions = ref([])
 
 // 分页数据
 const pagination = reactive({
@@ -278,15 +268,15 @@ const handleSearch = async () => {
     const params = {
       page: pagination.page,
       page_size: pagination.size,
-      name: searchForm.keyword,
-      category: searchForm.category,
+      name: searchForm.name,
+      specification: searchForm.specification,
+      price_type: searchForm.price_type,
       region: searchForm.region,
-      price_min: searchForm.priceMin,
-      price_max: searchForm.priceMax,
+      price_date: searchForm.price_date,
       is_verified: searchForm.verified
     }
 
-    const response = await getBaseMaterials(params)
+    const response = await getBaseMaterials(params, { __skipLoading: true })
     const result = response.data?.data || response.data || response
     
     materials.value = result.items || result.materials || []
@@ -305,17 +295,29 @@ const handleSearch = async () => {
 // 重置筛选
 const resetFilters = () => {
   Object.assign(searchForm, {
-    keyword: '',
-    category: '',
+    name: '',
+    specification: '',
+    price_type: '',
     region: '',
-    priceMin: null,
-    priceMax: null,
-    source: '',
-    dateRange: null,
+    price_date: '',
     verified: null
   })
+  specOptions.value = []
   pagination.page = 1
   handleSearch()
+}
+
+const fetchAvailableRegions = async (priceType = null) => {
+  try {
+    const resp = await getRegions(priceType)
+    const regions = resp.data?.regions || resp.regions || []
+    availableRegions.value = regions
+      .filter(r => r && r.trim())
+      .sort()
+      .map(r => ({ label: getRegionText(r), value: r }))
+  } catch (e) {
+    availableRegions.value = []
+  }
 }
 
 // 筛选条件改变时的处理
@@ -491,7 +493,76 @@ const handlePageChange = (page) => {
 
 // 初始化
 onMounted(() => {
+  fetchAvailableRegions()
   handleSearch()
+})
+
+watch(() => searchForm.price_type, async (newType) => {
+  searchForm.region = ''
+  await fetchAvailableRegions(newType)
+})
+
+const getPeriodText = (row) => {
+  if (row.price_date) {
+    const parts = String(row.price_date).split('-')
+    const year = parts[0]
+    const month = parts[1] ? parts[1].padStart(2, '0') : ''
+    return year && month ? `${year}年${month}月` : row.price_date
+  }
+  if (row.issue_period) return row.issue_period
+  return '-'
+}
+
+// 规格候选逻辑
+const specOptions = ref([])
+const loadingSpecs = ref(false)
+let specTimer = null
+
+const fetchSpecOptions = async () => {
+  loadingSpecs.value = true
+  try {
+    const resp = await getBaseMaterials({
+      page: 1,
+      page_size: 200,
+      name: searchForm.name,
+      price_type: searchForm.price_type,
+      region: searchForm.region,
+      price_date: searchForm.price_date,
+      _t: Date.now()
+    }, { __skipLoading: true })
+    const result = resp.data?.data || resp.data || resp
+    const items = result.items || result.materials || []
+    const set = new Set()
+    items.forEach(i => { if (i.specification) set.add(i.specification) })
+    specOptions.value = Array.from(set)
+
+    if (specOptions.value.length === 0 && searchForm.name && searchForm.name.trim()) {
+      const similarResp = await searchSimilarBaseMaterials(searchForm.name, 50)
+      const similar = similarResp.data || similarResp
+      const list = Array.isArray(similar) ? similar : (similar.items || [])
+      const set2 = new Set(specOptions.value)
+      list.forEach(i => { if (i.specification) set2.add(i.specification) })
+      specOptions.value = Array.from(set2)
+    }
+  } catch (e) {
+    specOptions.value = []
+  } finally {
+    loadingSpecs.value = false
+  }
+}
+
+watch(() => searchForm.name, (nv) => {
+  if (specTimer) {
+    clearTimeout(specTimer)
+  }
+  specTimer = setTimeout(() => {
+    if (nv && nv.trim()) {
+      fetchSpecOptions()
+    } else {
+      specOptions.value = []
+      searchForm.specification = ''
+    }
+  }, 300)
 })
 </script>
 
@@ -538,9 +609,18 @@ onMounted(() => {
 
     .basic-search {
       margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px 16px;
       
       .search-input {
         max-width: 600px;
+      }
+
+      .reset-btn {
+        height: 40px;
+        padding: 0 16px;
       }
     }
 

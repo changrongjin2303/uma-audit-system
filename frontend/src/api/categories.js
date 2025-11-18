@@ -3,7 +3,7 @@
  */
 import request from '@/utils/request'
 
-const API_PREFIX = '/api/v1/material-categories'
+const API_PREFIX = '/material-categories'
 
 /**
  * 获取分类树结构

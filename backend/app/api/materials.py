@@ -34,6 +34,7 @@ async def get_base_materials(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=2000, description="每页记录数"),
     name: Optional[str] = Query(None, description="材料名称搜索"),
+    specification: Optional[str] = Query(None, description="规格型号搜索"),
     category: Optional[str] = Query(None, description="材料分类"),
     region: Optional[str] = Query(None, description="适用地区"),
     price_min: Optional[str] = Query(None, description="价格下限"),
@@ -66,6 +67,7 @@ async def get_base_materials(
     
     search_params = BaseMaterialSearchRequest(
         query=name,  # 使用name参数
+        specification=specification,
         category=category,
         region=region,
         price_min=price_min_float,

@@ -1693,7 +1693,11 @@ const downloadImportReport = () => {
 
 const goToProject = () => {
   if (projectId) {
-    router.push(`/projects/${projectId}`)
+    router.push({
+      name: 'ProjectDetail',
+      params: { id: projectId },
+      query: { refresh: 'materials', timestamp: Date.now().toString() }
+    })
   } else {
     router.push('/projects')
   }

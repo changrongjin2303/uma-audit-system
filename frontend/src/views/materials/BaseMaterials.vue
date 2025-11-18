@@ -35,6 +35,28 @@
             @keyup.enter="handleSearch"
           />
         </el-form-item>
+        <el-form-item label="规格型号">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <el-select
+              v-model="searchForm.specification"
+              filterable
+              allow-create
+              default-first-option
+              clearable
+              placeholder="请选择规格型号"
+              :loading="loadingSpecs"
+              style="width: 200px"
+            >
+              <el-option
+                v-for="spec in specOptions"
+                :key="spec"
+                :label="spec"
+                :value="spec"
+              />
+            </el-select>
+            <el-button :icon="Search" @click="fetchSpecOptions">匹配型号</el-button>
+          </div>
+        </el-form-item>
         <el-form-item label="期刊类型">
           <el-select
             v-model="searchForm.price_type"
@@ -60,6 +82,16 @@
               :value="region.value"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item label="期数">
+          <el-date-picker
+            v-model="searchForm.price_date"
+            type="month"
+            placeholder="选择期数"
+            value-format="YYYY-MM"
+            style="width: 200px"
+            clearable
+          />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :icon="Search" @click="handleSearch">
@@ -440,7 +472,7 @@ import {
   UploadFilled
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
-import { getBaseMaterials, createBaseMaterial, updateBaseMaterial, deleteBaseMaterial, batchDeleteBaseMaterials, getRegions } from '@/api/materials'
+import { getBaseMaterials, createBaseMaterial, updateBaseMaterial, deleteBaseMaterial, batchDeleteBaseMaterials, getRegions, searchSimilarBaseMaterials } from '@/api/materials'
 import { useSelectionAcrossPages } from '@/composables/useSelectionAcrossPages'
 
 // 使用路由
@@ -481,8 +513,62 @@ const previewData = ref([])
 // 搜索表单
 const searchForm = reactive({
   name: '',
+  specification: '',
   price_type: '',
-  region: ''
+  region: '',
+  price_date: ''
+})
+
+// 规格候选与联动
+const specOptions = ref([])
+const loadingSpecs = ref(false)
+let specTimer = null
+
+const fetchSpecOptions = async () => {
+  loadingSpecs.value = true
+  try {
+    const resp = await getBaseMaterials({
+      page: 1,
+      page_size: 200,
+      name: searchForm.name,
+      price_type: searchForm.price_type,
+      region: searchForm.region,
+      price_date: searchForm.price_date,
+      _t: Date.now()
+    }, { __skipLoading: true })
+    const result = resp.data?.data || resp.data || resp
+    const items = result.items || result.materials || []
+    const set = new Set()
+    items.forEach(i => { if (i.specification) set.add(i.specification) })
+    specOptions.value = Array.from(set)
+
+    if (specOptions.value.length === 0 && searchForm.name && searchForm.name.trim()) {
+      const similarResp = await searchSimilarBaseMaterials(searchForm.name, 50)
+      const similar = similarResp.data || similarResp
+      const list = Array.isArray(similar) ? similar : (similar.items || [])
+      const set2 = new Set(specOptions.value)
+      list.forEach(i => { if (i.specification) set2.add(i.specification) })
+      specOptions.value = Array.from(set2)
+    }
+  } catch (e) {
+    specOptions.value = []
+  } finally {
+    loadingSpecs.value = false
+  }
+}
+
+watch(() => searchForm.name, (nv) => {
+  if (specTimer) {
+    clearTimeout(specTimer)
+  }
+  specTimer = setTimeout(() => {
+    if (nv && nv.trim()) {
+      fetchSpecOptions()
+    } else {
+      specOptions.value = []
+      searchForm.specification = ''
+    }
+  }, 300)
 })
 
 // 可用地区选项
@@ -594,13 +680,15 @@ const fetchMaterials = async () => {
       page: pagination.page,
       page_size: pagination.size,
       name: searchForm.name,
+      specification: searchForm.specification,
       price_type: searchForm.price_type,
       region: searchForm.region,
+      price_date: searchForm.price_date,
       // 添加时间戳防止缓存
       _t: Date.now()
     }
     
-    const response = await getBaseMaterials(params)
+    const response = await getBaseMaterials(params, { __skipLoading: true })
     console.log('获取基准材料数据响应:', response)
     const result = response.data?.data || response.data || response
     
@@ -845,9 +933,12 @@ const handleSearch = () => {
 const handleReset = () => {
   Object.assign(searchForm, {
     name: '',
+    specification: '',
     price_type: '',
-    region: ''
+    region: '',
+    price_date: ''
   })
+  specOptions.value = []
   pagination.page = 1
   fetchMaterials()
 }
@@ -1071,7 +1162,8 @@ const handleBatchDelete = async () => {
           page_size: size,
           name: searchForm.name,
           price_type: searchForm.price_type,
-          region: searchForm.region
+          region: searchForm.region,
+          price_date: searchForm.price_date
         })
         const result = resp.data?.data || resp.data || resp
         const list = result.items || result.materials || []
@@ -1111,7 +1203,7 @@ const handleExport = () => {
 // 获取可用地区选项
 const fetchAvailableRegions = async (priceType = null) => {
   try {
-    const response = await getRegions(priceType)
+    const response = await getRegions(priceType, { __skipLoading: true })
     const regions = response.data?.regions || response.regions || []
 
     // 转换为选项格式
@@ -1320,8 +1412,12 @@ const tableHeight = computed(() => {
   margin-bottom: 20px;
 
   .search-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+
     .el-form-item {
-      margin-bottom: 0;
+      margin-bottom: 12px;
     }
   }
 }

@@ -38,13 +38,13 @@ export function analyzePricedMaterials(projectId, data = {}, config = {}) {
 }
 
 // 获取项目分析结果
-export function getProjectAnalysisResults(projectId, params = {}) {
-  return request.get(`/analysis/${projectId}/analysis-results`, params)
+export function getProjectAnalysisResults(projectId, params = {}, config = {}) {
+  return request.get(`/analysis/${projectId}/analysis-results`, params, config)
 }
 
 // 获取市场信息价材料分析结果
-export function getProjectPricedMaterialsAnalysis(projectId, params = {}) {
-  return request.get(`/analysis/${projectId}/priced-materials-analysis`, params)
+export function getProjectPricedMaterialsAnalysis(projectId, params = {}, config = {}) {
+  return request.get(`/analysis/${projectId}/priced-materials-analysis`, params, config)
 }
 
 // 获取单个材料分析结果
@@ -58,8 +58,8 @@ export function deleteMaterialAnalysis(materialId) {
 }
 
 // 获取项目分析统计信息
-export function getProjectAnalysisStatistics(projectId) {
-  return request.get(`/analysis/${projectId}/analysis-statistics`)
+export function getProjectAnalysisStatistics(projectId, config = {}) {
+  return request.get(`/analysis/${projectId}/analysis-statistics`, {}, config)
 }
 
 // 获取有分析结果的项目列表

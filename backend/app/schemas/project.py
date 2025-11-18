@@ -65,6 +65,10 @@ class ProjectBase(BaseModel):
     price_base_date: Optional[str] = Field(None, description="价格基准日期")
     analysis_precision: Optional[str] = Field("standard", description="分析精度")
 
+    # 合同工期（月精度，格式 YYYY-MM）
+    contract_start_date: Optional[str] = Field(None, description="合同工期开始 (YYYY-MM)")
+    contract_end_date: Optional[str] = Field(None, description="合同工期结束 (YYYY-MM)")
+
     # 分析设置信息
     base_price_date: Optional[str] = Field(None, description="基期信息价日期")
     base_price_province: Optional[str] = Field(None, description="基期信息价省份")
@@ -93,6 +97,10 @@ class ProjectUpdate(BaseModel):
     price_base_date: Optional[str] = Field(None, description="价格基准日期")
     analysis_precision: Optional[str] = Field(None, description="分析精度")
     status: Optional[ProjectStatus] = Field(None, description="项目状态")
+
+    # 合同工期（月精度，格式 YYYY-MM）
+    contract_start_date: Optional[str] = Field(None, description="合同工期开始 (YYYY-MM)")
+    contract_end_date: Optional[str] = Field(None, description="合同工期结束 (YYYY-MM)")
 
     # 分析设置信息
     base_price_date: Optional[str] = Field(None, description="基期信息价日期")

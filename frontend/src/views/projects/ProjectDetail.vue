@@ -107,7 +107,11 @@
                 </div>
                 <div class="info-item">
                   <span class="label">基期信息价日期:</span>
-                  <span class="value">{{ project.base_price_date || '未设置' }}</span>
+                  <span class="value">{{ formatYearMonth(project.base_price_date) }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="label">合同工期:</span>
+                  <span class="value">{{ getContractPeriodText(project) }}</span>
                 </div>
                 <div class="info-item">
                   <span class="label">基期信息价地区:</span>
@@ -514,7 +518,14 @@
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="基期信息价日期">
-              <el-input v-model="editForm.base_price_date" placeholder="如：2024-12" />
+              <el-date-picker
+                v-model="editForm.base_price_date"
+                type="month"
+                placeholder="选择基期信息价日期"
+                format="YYYY-MM"
+                value-format="YYYY-MM"
+                style="width: 100%"
+              />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -553,6 +564,33 @@
                 <el-option label="萧山区" value="330109" />
                 <el-option label="余杭区" value="330110" />
               </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="合同开始月份">
+              <el-date-picker
+                v-model="editForm.contract_start_date"
+                type="month"
+                format="YYYY-MM"
+                value-format="YYYY-MM"
+                placeholder="选择合同开始月份"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="合同结束月份">
+              <el-date-picker
+                v-model="editForm.contract_end_date"
+                type="month"
+                format="YYYY-MM"
+                value-format="YYYY-MM"
+                placeholder="选择合同结束月份"
+                style="width: 100%"
+              />
             </el-form-item>
           </el-col>
         </el-row>
@@ -974,6 +1012,13 @@ const fetchMaterials = async () => {
       page: pagination.page,
       size: pagination.size
     }
+    if (activeTab.value === 'matched') {
+      params.is_matched = true
+    } else if (activeTab.value === 'unmatched') {
+      params.is_matched = false
+    } else if (searchFilters.matchStatus) {
+      params.is_matched = searchFilters.matchStatus === 'matched'
+    }
     const response = await getProjectMaterials(route.params.id, params)
     console.log('获取项目材料数据响应:', response)
     
@@ -1174,6 +1219,71 @@ const getAuditScopeText = (auditScope) => {
   return auditScope.map(scope => scopeMap[scope] || scope).join('、')
 }
 
+const getContractPeriodText = (project) => {
+  const fmt = (m) => {
+    if (!m) return null
+    const s = String(m)
+    if (s.includes('-')) {
+      const [y, mm] = s.split('-')
+      return `${y}年${String(mm).padStart(2, '0')}月`
+    }
+    if (/^\d{4}\d{2}$/.test(s)) {
+      return `${s.slice(0,4)}年${s.slice(4)}月`
+    }
+    return s
+  }
+  const direct = project.contract_period
+  if (direct && typeof direct === 'string') return direct
+  const start = project.contract_start_date || project.contract_start || project.contract_start_month
+  const end = project.contract_end_date || project.contract_end || project.contract_end_month
+  const fs = fmt(start)
+  const fe = fmt(end)
+  if (fs && fe) return `${fs}至${fe}`
+  if (project.description) {
+    const m = String(project.description).match(/合同工期[:：]\s*(\d{4}[年-]\d{1,2}月?)\s*至\s*(\d{4}[年-]\d{1,2}月?)/)
+    if (m) {
+      const norm = (x) => {
+        if (!x) return null
+        const s = x.replace('年','-').replace('月','')
+        const [y, mm] = s.split('-')
+        return `${y}年${String(mm).padStart(2,'0')}月`
+      }
+      const s1 = norm(m[1])
+      const s2 = norm(m[2])
+      if (s1 && s2) return `${s1}至${s2}`
+    }
+  }
+  return '未设置'
+}
+
+const formatYearMonth = (value) => {
+  if (!value && value !== 0) return '未设置'
+  const str = String(value).trim()
+  if (!str) return '未设置'
+  let normalized = str.replace('年', '-').replace('月', '')
+  normalized = normalized.replace(/[/.]/g, '-')
+  let year
+  let month
+  const parts = normalized.split('-').filter(Boolean)
+  if (parts.length >= 2) {
+    ;[year, month] = parts
+  } else if (/^\d{6}$/.test(normalized)) {
+    year = normalized.slice(0, 4)
+    month = normalized.slice(4)
+  } else if (/^\d{4}$/.test(normalized)) {
+    year = normalized
+    month = '01'
+  } else {
+    return str
+  }
+  const yearNum = parseInt(year, 10)
+  let monthNum = parseInt(month, 10)
+  if (!Number.isFinite(yearNum)) return str
+  if (!Number.isFinite(monthNum)) monthNum = 1
+  monthNum = Math.max(1, Math.min(12, monthNum))
+  return `${yearNum}年${String(monthNum).padStart(2, '0')}月`
+}
+
 const getAnalysisStatusType = (status) => {
   const statusMap = {
     'pending': 'info',
@@ -1211,7 +1321,7 @@ const handlePageChange = (page) => {
 const applySearchFilters = () => {
   // 重置到第一页
   pagination.page = 1
-  // 过滤逻辑已在 filteredMaterials 计算属性中实现，这里只需触发更新
+  fetchMaterials()
 }
 
 const resetSearchFilters = () => {
@@ -1894,8 +2004,10 @@ const openEditDialog = () => {
     editForm.support_price_adjustment = project.value.support_price_adjustment !== false
     editForm.price_adjustment_range = project.value.price_adjustment_range || 5.0
     editForm.audit_scope = project.value.audit_scope || []
-    editForm.description = project.value.description || ''
-    editForm.status = project.value.status || 'draft'
+  editForm.description = project.value.description || ''
+  editForm.status = project.value.status || 'draft'
+  editForm.contract_start_date = project.value.contract_start_date || project.value.contract_start || project.value.contract_start_month || ''
+  editForm.contract_end_date = project.value.contract_end_date || project.value.contract_end || project.value.contract_end_month || ''
 
     showEditDialog.value = true
   }
@@ -1912,7 +2024,7 @@ const handleUpdateProject = async () => {
     submitting.value = true
     
     // 调用更新API
-    const response = await updateProject(route.params.id, {
+    const data = {
       name: editForm.name,
       location: editForm.location || null,
       project_type: editForm.project_type,
@@ -1925,8 +2037,27 @@ const handleUpdateProject = async () => {
       price_adjustment_range: editForm.price_adjustment_range || null,
       audit_scope: editForm.audit_scope || null,
       description: editForm.description || null,
-      status: editForm.status
-    })
+      status: editForm.status,
+      contract_start_date: editForm.contract_start_date || null,
+      contract_end_date: editForm.contract_end_date || null
+    }
+    const fmt = (m) => {
+      if (!m) return null
+      const s = String(m)
+      if (s.includes('-')) {
+        const [y, mm] = s.split('-')
+        return `${y}年${String(mm).padStart(2,'0')}月`
+      }
+      return null
+    }
+    const s1 = fmt(data.contract_start_date)
+    const s2 = fmt(data.contract_end_date)
+    if (s1 && s2) {
+      const text = `合同工期：${s1}至${s2}`
+      const has = data.description && /合同工期[:：]/.test(data.description)
+      data.description = has ? data.description.replace(/合同工期[:：].*$/, text) : (data.description ? `${data.description}\n${text}` : text)
+    }
+    const response = await updateProject(route.params.id, data)
     
     ElMessage.success('项目更新成功')
     showEditDialog.value = false
@@ -2013,6 +2144,11 @@ onMounted(() => {
 
   // 监听窗口大小变化
   window.addEventListener('resize', handleResize)
+})
+
+watch(activeTab, () => {
+  pagination.page = 1
+  fetchMaterials()
 })
 
 // 清理事件监听器

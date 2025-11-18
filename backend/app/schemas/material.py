@@ -233,6 +233,7 @@ class BaseMaterialImportResponse(BaseModel):
 class BaseMaterialSearchRequest(BaseModel):
     """基准材料搜索请求模式"""
     query: Optional[str] = Field(None, description="搜索关键词")
+    specification: Optional[str] = Field(None, description="规格型号关键词")
     category: Optional[str] = Field(None, description="材料分类")
     category_id: Optional[int] = Field(None, description="分类ID")
     region: Optional[str] = Field(None, description="适用地区")

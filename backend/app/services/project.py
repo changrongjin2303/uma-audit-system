@@ -35,6 +35,8 @@ class ProjectService:
             budget_amount=project_data.budget_amount,
             price_base_date=project_data.price_base_date,
             analysis_precision=project_data.analysis_precision,
+            contract_start_date=project_data.contract_start_date,
+            contract_end_date=project_data.contract_end_date,
             # 分析设置字段
             base_price_date=project_data.base_price_date,
             base_price_province=project_data.base_price_province,

@@ -4,7 +4,7 @@
 用于分析项目中已匹配材料与市场信息价材料库中价格的差异
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
 import logging
@@ -18,6 +18,7 @@ from app.utils.unit_conversion import (
     normalize_unit,
     can_convert_units,
     get_conversion_factor,
+    convert_unit_price,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,8 @@ class PricedMaterialAnalysisService:
     ) -> List[Dict[str, Any]]:
         """分析一批材料的价格差异"""
         
+        contract_info = await self._get_project_contract_info(db, project_id)
+        
         # 获取项目材料及其匹配的基准材料信息
         stmt = select(
             ProjectMaterial.id,
@@ -132,7 +135,11 @@ class PricedMaterialAnalysisService:
         
         for material in materials:
             try:
-                analysis = await self._analyze_single_material(material)
+                analysis = await self._analyze_single_material(
+                    material,
+                    contract_info=contract_info,
+                    db=db
+                )
                 differences.append(analysis)
             except Exception as e:
                 logger.error(f"分析材料 {material.id} 时出错: {str(e)}")
@@ -146,8 +153,136 @@ class PricedMaterialAnalysisService:
                 })
         
         return differences
+
+    async def _get_project_contract_info(self, db: AsyncSession, project_id: int) -> Dict[str, Optional[str]]:
+        from app.models.project import Project
+        stmt = select(
+            Project.base_price_date,
+            Project.price_base_date,
+            Project.contract_start_date,
+            Project.contract_end_date
+        ).where(Project.id == project_id)
+        result = await db.execute(stmt)
+        project = result.first()
+        
+        if not project:
+            return {
+                "base_price_date": None,
+                "contract_start_date": None,
+                "contract_end_date": None
+            }
+        
+        base_price = project.base_price_date or project.price_base_date
+        
+        return {
+            "base_price_date": self._normalize_year_month(base_price),
+            "contract_start_date": self._normalize_year_month(project.contract_start_date),
+            "contract_end_date": self._normalize_year_month(project.contract_end_date)
+        }
     
-    async def _analyze_single_material(self, material) -> Dict[str, Any]:
+    def _normalize_year_month(self, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        str_value = str(value).strip()
+        if not str_value:
+            return None
+        str_value = str_value.replace('年', '-').replace('月', '')
+        for sep in ['-', '/', '.']:
+            if sep in str_value:
+                parts = [p for p in str_value.split(sep) if p]
+                break
+        else:
+            if len(str_value) == 6 and str_value.isdigit():
+                parts = [str_value[:4], str_value[4:]]
+            else:
+                parts = [str_value[:4], str_value[4:]] if len(str_value) > 4 else [str_value, '1']
+        if len(parts) < 2:
+            return None
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+        except ValueError:
+            return None
+        month = max(1, min(month, 12))
+        return f"{year:04d}-{month:02d}"
+    
+    def _year_month_tuple(self, value: Optional[str]) -> Optional[Tuple[int, int]]:
+        norm = self._normalize_year_month(value)
+        if not norm:
+            return None
+        parts = norm.split('-')
+        if len(parts) != 2:
+            return None
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+    
+    def _is_within_contract(self, price_date: Optional[str], contract_info: Dict[str, Optional[str]]) -> bool:
+        ym_tuple = self._year_month_tuple(price_date)
+        if not ym_tuple:
+            return False
+        start_tuple = self._year_month_tuple(contract_info.get("contract_start_date"))
+        end_tuple = self._year_month_tuple(contract_info.get("contract_end_date"))
+        if start_tuple and ym_tuple < start_tuple:
+            return False
+        if end_tuple and ym_tuple > end_tuple:
+            return False
+        return True
+    
+    async def _get_contract_period_prices(
+        self,
+        db: AsyncSession,
+        material_row,
+        contract_info: Dict[str, Optional[str]]
+    ) -> List[BaseMaterial]:
+        base_material = None
+        if material_row.base_material_id:
+            base_material = await db.get(BaseMaterial, material_row.base_material_id)
+        if not base_material:
+            return []
+        
+        conditions = []
+        if base_material.material_code:
+            conditions.append(BaseMaterial.material_code == base_material.material_code)
+        else:
+            conditions.append(BaseMaterial.name == base_material.name)
+            if base_material.specification:
+                conditions.append(BaseMaterial.specification == base_material.specification)
+            else:
+                conditions.append(
+                    or_(
+                        BaseMaterial.specification.is_(None),
+                        BaseMaterial.specification == ""
+                    )
+                )
+            if base_material.unit:
+                conditions.append(BaseMaterial.unit == base_material.unit)
+            if base_material.region:
+                conditions.append(BaseMaterial.region == base_material.region)
+            elif getattr(base_material, 'province', None):
+                conditions.append(BaseMaterial.province == base_material.province)
+            if base_material.price_type:
+                conditions.append(BaseMaterial.price_type == base_material.price_type)
+        
+        stmt = select(BaseMaterial).where(and_(*conditions))
+        result = await db.execute(stmt)
+        materials = result.scalars().all()
+        
+        if not materials:
+            materials = [base_material]
+        
+        contract_prices = [
+            m for m in materials
+            if self._is_within_contract(m.price_date, contract_info)
+        ]
+        
+        if not contract_prices:
+            contract_prices = materials
+        
+        return contract_prices
+    
+    async def _analyze_single_material(self, material, contract_info=None, db=None) -> Dict[str, Any]:
         """分析单个材料的价格差异"""
         
         # 获取价格数据
@@ -180,10 +315,15 @@ class PricedMaterialAnalysisService:
                     )
                 conversion_applied = True
                 conversion_factor = factor
-                base_price = (base_price * factor).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-                base_price_including_tax = (
-                    base_price_including_tax * factor
-                ).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                # 将“每 base_unit 的价格”换算为“每 project_unit 的价格”，应当除以换算系数
+                converted_excl = convert_unit_price(base_price, base_unit, project_unit)
+                converted_incl = convert_unit_price(base_price_including_tax, base_unit, project_unit)
+                if converted_excl is None or converted_incl is None:
+                    raise ValueError(
+                        f"材料 {material.material_name} 的单位换算失败: 项目单位 {project_unit_raw}, 基准单位 {base_unit_raw}"
+                    )
+                base_price = converted_excl.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                base_price_including_tax = converted_incl.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
                 base_price_excluding_tax = base_price
             else:
                 raise ValueError(
@@ -196,12 +336,51 @@ class PricedMaterialAnalysisService:
                 f"材料 {material.material_name} 的不含税价格为0或不存在，无法进行价格差异分析"
             )
         
+        # 计算合同期平均价
+        contract_average_price = base_price
+        contract_period_prices = []
+        
+        if contract_info and db:
+            related_prices = await self._get_contract_period_prices(db, material, contract_info)
+            if related_prices:
+                price_values = []
+                for related in related_prices:
+                    price_value = related.price_excluding_tax or related.price
+                    if price_value is None:
+                        continue
+                    try:
+                        price_decimal = Decimal(str(price_value))
+                    except Exception:
+                        continue
+
+                    related_unit_raw = related.unit or ""
+                    related_unit_norm = normalize_unit(related_unit_raw)
+                    price_in_project_unit = price_decimal
+
+                    if project_unit and related_unit_norm and related_unit_norm != project_unit:
+                        if can_convert_units(related_unit_norm, project_unit):
+                            converted_value = convert_unit_price(price_decimal, related_unit_norm, project_unit)
+                            if converted_value is None:
+                                continue
+                            price_in_project_unit = Decimal(str(converted_value)).quantize(
+                                Decimal("0.0001"), rounding=ROUND_HALF_UP
+                            )
+                        else:
+                            continue
+
+                    price_values.append(price_in_project_unit)
+                if price_values:
+                    contract_average_price = (
+                        sum(price_values) / Decimal(len(price_values))
+                    ).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                    contract_period_prices = [float(p) for p in price_values]
+
         # 计算价格差异
-        price_difference = project_price - base_price
+        price_difference = project_price - contract_average_price
         price_difference_rate = Decimal('0')
         
-        if base_price > 0:
-            price_difference_rate = (price_difference / base_price).quantize(
+        if contract_average_price > 0:
+            price_difference_rate = (price_difference / contract_average_price).quantize(
                 Decimal('0.0001'), rounding=ROUND_HALF_UP
             )
         
@@ -226,9 +405,11 @@ class PricedMaterialAnalysisService:
             
             # 价格信息
             "project_unit_price": float(project_price),
-            "base_unit_price": float(base_price),
+            "base_unit_price": float(contract_average_price),
             "base_price_including_tax": float(base_price_including_tax),
             "base_price_excluding_tax": float(base_price_excluding_tax),
+            "original_base_price": float(base_price),
+            "contract_period_prices": contract_period_prices,
             
             # 差异分析
             "unit_price_difference": float(price_difference),
@@ -321,6 +502,9 @@ class PricedMaterialAnalysisService:
                         "base_unit_price": diff['base_unit_price'],
                         "base_price_including_tax": diff.get('base_price_including_tax'),
                         "base_price_excluding_tax": diff.get('base_price_excluding_tax'),
+                        "contract_average_price": diff['base_unit_price'],
+                        "contract_period_prices": diff.get('contract_period_prices'),
+                        "original_base_price": diff.get('original_base_price'),
                         "unit_price_difference": diff['unit_price_difference'],
                         "total_price_difference": diff['total_price_difference'],
                         "price_difference_rate": diff['price_difference_rate'],
@@ -337,7 +521,10 @@ class PricedMaterialAnalysisService:
                     },
                     
                     # 分析说明
-                    analysis_reasoning=f"市场信息价对比分析：项目单价{diff['project_unit_price']}元，基准价格{diff['base_unit_price']}元，差异率{diff['price_difference_rate']:.2%}",
+                    analysis_reasoning=(
+                        f"合同期平均价{diff['base_unit_price']:.2f}元，对比项目单价"
+                        f"{diff['project_unit_price']:.2f}元，差异率{diff['price_difference_rate']:.2%}"
+                    ),
                     
                     created_at=func.now(),
                     updated_at=func.now()

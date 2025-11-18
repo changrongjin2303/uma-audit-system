@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=[".env", "../.env"],
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=True,
+        extra="ignore"
     )
     
     # 基本配置

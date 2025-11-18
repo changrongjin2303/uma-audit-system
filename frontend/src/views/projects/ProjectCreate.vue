@@ -159,6 +159,30 @@
                     </div>
                   </el-form-item>
                 </el-col>
+                <el-col :lg="12" :span="24">
+                  <el-form-item label="合同开始月份">
+                    <el-date-picker
+                      v-model="form.contract_start_date"
+                      type="month"
+                      placeholder="选择合同开始月份"
+                      format="YYYY-MM"
+                      value-format="YYYY-MM"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :lg="12" :span="24">
+                  <el-form-item label="合同结束月份">
+                    <el-date-picker
+                      v-model="form.contract_end_date"
+                      type="month"
+                      placeholder="选择合同结束月份"
+                      format="YYYY-MM"
+                      value-format="YYYY-MM"
+                      style="width: 100%"
+                    />
+                  </el-form-item>
+                </el-col>
               </el-row>
 
               <el-row :gutter="24">
@@ -702,7 +726,9 @@ const form = reactive({
   base_price_district: '',
   support_price_adjustment: true,
   price_adjustment_range: 5,
-  audit_scope: ['price_analysis', 'material_matching']
+  audit_scope: ['price_analysis', 'material_matching'],
+  contract_start_date: '',
+  contract_end_date: ''
 })
 
 // 验证规则
@@ -863,6 +889,20 @@ const handleSubmit = async () => {
       projectData.budget_amount = isNaN(budgetValue) ? null : budgetValue
     }
     
+    // 将合同工期以规范格式写入描述，确保后端未支持字段时也能保存
+    const fmt = (m) => {
+      if (!m) return null
+      const [y, mm] = String(m).split('-')
+      return y && mm ? `${y}年${mm.padStart(2, '0')}月` : null
+    }
+    const cpStart = fmt(projectData.contract_start_date)
+    const cpEnd = fmt(projectData.contract_end_date)
+    if (cpStart && cpEnd) {
+      const periodText = `合同工期：${cpStart}至${cpEnd}`
+      projectData.contract_period = `${cpStart}至${cpEnd}`
+      projectData.description = projectData.description ? `${projectData.description}\n${periodText}` : periodText
+    }
+
     const response = await createProject(projectData)
     const projectId = response.id
     

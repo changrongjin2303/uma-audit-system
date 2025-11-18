@@ -6,13 +6,22 @@ import redis
 
 
 # 数据库引擎
-engine = create_async_engine(
-    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
-    echo=settings.DB_ECHO,
-    pool_pre_ping=True,
-    pool_size=20,
-    max_overflow=30
-)
+_db_url = settings.DATABASE_URL
+if _db_url.startswith("postgresql://"):
+    _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://")
+    engine = create_async_engine(
+        _db_url,
+        echo=settings.DB_ECHO,
+        pool_pre_ping=True,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW
+    )
+else:
+    engine = create_async_engine(
+        _db_url,
+        echo=settings.DB_ECHO,
+        pool_pre_ping=True
+    )
 
 # 会话工厂
 AsyncSessionLocal = sessionmaker(

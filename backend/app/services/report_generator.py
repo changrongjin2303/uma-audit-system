@@ -35,8 +35,16 @@ class ReportGenerator:
         self.reports_dir = Path("reports")
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         
-        # 配置matplotlib中文支持
-        rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS']
+        # 配置matplotlib中文支持（增加常见中文字体作为回退）
+        rcParams['font.family'] = 'sans-serif'
+        rcParams['font.sans-serif'] = [
+            'Microsoft YaHei',
+            'SimSun',
+            'PingFang SC',
+            'Noto Sans CJK SC',
+            'SimHei',
+            'Arial Unicode MS'
+        ]
         rcParams['axes.unicode_minus'] = False
         
     async def generate_audit_report(
@@ -64,7 +72,10 @@ class ReportGenerator:
 
             # 创建Word文档
             doc = Document()
+            self._setup_document_styles(doc)
+            self._apply_document_layout(doc)
 
+            self._add_header_footer(doc, report_title='造价材料审计报告')
             # 添加报告标题页
             self._add_title_page(doc, report_data)
 
@@ -305,6 +316,58 @@ class ReportGenerator:
             'guidance_materials_report': guidance_materials_report,
             'top_adjustments': top_adjustments
         }
+
+    def _setup_document_styles(self, doc: Document):
+        """统一设置文档的中文字体：标题用黑体，正文用宋体，并确保 EastAsia 字体映射"""
+        try:
+            normal = doc.styles['Normal']
+            normal.font.name = 'SimSun'
+            normal._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+        except Exception:
+            pass
+
+        for heading in ['Heading 1', 'Heading 2', 'Heading 3']:
+            try:
+                h = doc.styles[heading]
+                h.font.name = 'SimHei'
+                h._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimHei')
+            except Exception:
+                continue
+
+    def _set_east_asia_font(self, run, font_name: str):
+        try:
+            run.font.name = font_name
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+        except Exception:
+            pass
+
+    def _apply_document_layout(self, doc: Document):
+        try:
+            for section in doc.sections:
+                section.top_margin = Cm(2.5)
+                section.bottom_margin = Cm(2.5)
+                section.left_margin = Cm(2.5)
+                section.right_margin = Cm(2.5)
+            pf = doc.styles['Normal'].paragraph_format
+            pf.line_spacing = Pt(18)
+            pf.space_after = Pt(6)
+        except Exception:
+            pass
+
+    def _add_header_footer(self, doc: Document, report_title: str):
+        try:
+            for section in doc.sections:
+                header_para = section.header.paragraphs[0] if section.header.paragraphs else section.header.add_paragraph()
+                header_para.text = report_title
+                self._set_east_asia_font(header_para.runs[0], 'SimHei')
+                header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                footer_para = section.footer.paragraphs[0] if section.footer.paragraphs else section.footer.add_paragraph()
+                footer_para.text = '保密文件'
+                self._set_east_asia_font(footer_para.runs[0], 'SimSun')
+                footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        except Exception:
+            pass
     
     def _add_title_page(self, doc: Document, data: Dict[str, Any]):
         """添加报告标题页"""
@@ -357,7 +420,7 @@ class ReportGenerator:
         overview_para = doc.add_paragraph()
         run = overview_para.add_run('总体结论：')
         run.bold = True
-        run.font.name = 'SimHei'
+        self._set_east_asia_font(run, 'SimHei')
         run.font.size = Pt(11)
         overview_para.add_run(
             f" 本次对项目共审查 {stats['total_materials']} 项材料，其中 {stats['analyzed_materials']} 项完成价格分析，"
@@ -386,7 +449,7 @@ class ReportGenerator:
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
             run = cell.paragraphs[0].runs[0]
-            run.font.name = 'SimSun'
+            self._set_east_asia_font(run, 'SimSun')
             run.font.size = Pt(9)
 
         doc.add_paragraph()
@@ -557,6 +620,11 @@ class ReportGenerator:
             cells = risk_table.rows[0].cells
             cells[0].text = '风险等级'
             cells[1].text = '材料数量'
+            for c in cells:
+                p = c.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.runs[0].bold = True
+                self._set_east_asia_font(p.runs[0], 'SimHei')
             
             # 数据行
             for i, (risk_level, count) in enumerate(risk_stats.items(), 1):
@@ -597,7 +665,12 @@ class ReportGenerator:
         # 表头
         headers = ['序号', '材料名称', '规格', '单价', '风险等级', '问题描述']
         for i, header in enumerate(headers):
-            table.rows[0].cells[i].text = header
+            cell = table.rows[0].cells[i]
+            cell.text = header
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.runs[0].bold = True
+            self._set_east_asia_font(p.runs[0], 'SimHei')
         
         # 数据行
         for i, material in enumerate(problematic_materials, 1):

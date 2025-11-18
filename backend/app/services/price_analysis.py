@@ -232,17 +232,24 @@ class PriceAnalysisService:
         failed_materials = 0
         
         for material in unpriced_materials:
-            if material.analysis:
-                analyzed_materials += 1
-                if material.analysis.status == AnalysisStatus.COMPLETED:
-                    if material.analysis.is_reasonable is True:
-                        reasonable_materials += 1
-                    elif material.analysis.is_reasonable is False:
-                        unreasonable_materials += 1
-                elif material.analysis.status == AnalysisStatus.FAILED:
-                    failed_materials += 1
-                else:
-                    pending_materials += 1
+            try:
+                # 安全地访问 analysis 关系
+                analysis = getattr(material, 'analysis', None)
+                if analysis is not None:
+                    analyzed_materials += 1
+                    if analysis.status == AnalysisStatus.COMPLETED:
+                        if analysis.is_reasonable is True:
+                            reasonable_materials += 1
+                        elif analysis.is_reasonable is False:
+                            unreasonable_materials += 1
+                    elif analysis.status == AnalysisStatus.FAILED:
+                        failed_materials += 1
+                    else:
+                        pending_materials += 1
+            except Exception as e:
+                # 如果访问关系属性时出错，记录日志但继续处理
+                logger.warning(f"访问材料 {material.id} 的分析关系时出错: {e}")
+                continue
         
         not_analyzed = total_unpriced - analyzed_materials
         

@@ -375,21 +375,144 @@ const getScoreColor = (score) => {
 // 计算价格差异
 const getPriceDifference = () => {
   if (!matchedBaseMaterial.value || !material.value) return '0.00'
-  const diff = material.value.unit_price - matchedBaseMaterial.value.price
+  const fromUnit = matchedBaseMaterial.value.unit
+  const toUnit = material.value.unit
+  const unitAliases = {
+    '㎡': 'm²', 'm2': 'm²', 'm^2': 'm²', '平方': 'm²', '平方米': 'm²', '平米': 'm²',
+    'cm2': 'cm²', 'cm^2': 'cm²', '平方厘米': 'cm²', 'mm2': 'mm²', 'mm^2': 'mm²', '平方毫米': 'mm²', '㎜²': 'mm²',
+    '立方': 'm³', '立方米': 'm³', '立米': 'm³', 'm3': 'm³', 'm^3': 'm³',
+    '立方厘米': 'cm³', 'cm3': 'cm³', 'cm^3': 'cm³',
+    '立方分米': 'dm³', 'dm3': 'dm³', 'dm^3': 'dm³',
+    'mm3': 'mm³', 'mm^3': 'mm³', '立方毫米': 'mm³',
+    '升': 'L', '公升': 'L', 'l': 'L', 'L': 'L', 'ml': 'cm³', 'mL': 'cm³', '毫升': 'cm³',
+    '米': 'm', 'M': 'm', 'cm': 'cm', '厘米': 'cm', 'mm': 'mm', '毫米': 'mm', 'km': 'km', '公里': 'km', '千米': 'km',
+    '平方公里': 'km²', '平方千米': 'km²',
+    '克': 'g', '千克': 'kg', '公斤': 'kg', 'Kg': 'kg', 'KG': 'kg', '吨': 't', 'T': 't', 'mg': 'mg'
+  }
+  const normalize = (u) => {
+    if (!u) return ''
+    const cleaned = String(u).trim()
+    return unitAliases[cleaned] || unitAliases[cleaned.toLowerCase()] || cleaned.toLowerCase()
+  }
+  const factors = {
+    weight: { mg: 0.000001, g: 0.001, kg: 1, t: 1000 }
+  }
+  const familyOf = (u) => {
+    if (Object.keys(factors.weight).includes(u)) return 'weight'
+    return null
+  }
+  const getFactor = (from, to) => {
+    const f = familyOf(from)
+    if (!f || f !== familyOf(to)) return null
+    const map = factors[f]
+    return map[from] / map[to]
+  }
+  const uFrom = normalize(fromUnit)
+  const uTo = normalize(toUnit)
+  let basePrice = matchedBaseMaterial.value.price
+  if (uFrom && uTo && uFrom !== uTo) {
+    const conv = getFactor(uFrom, uTo)
+    if (conv && conv !== 0) {
+      basePrice = basePrice / conv
+    }
+  }
+  const diff = material.value.unit_price - basePrice
   return (diff >= 0 ? '+' : '') + formatNumber(Math.abs(diff))
 }
 
 // 计算价格差异百分比
 const getPriceDifferencePercentage = () => {
   if (!matchedBaseMaterial.value || !material.value || matchedBaseMaterial.value.price === 0) return '0%'
-  const percentage = ((material.value.unit_price - matchedBaseMaterial.value.price) / matchedBaseMaterial.value.price) * 100
+  const fromUnit = matchedBaseMaterial.value.unit
+  const toUnit = material.value.unit
+  const unitAliases = {
+    '㎡': 'm²', 'm2': 'm²', 'm^2': 'm²', '平方': 'm²', '平方米': 'm²', '平米': 'm²',
+    'cm2': 'cm²', 'cm^2': 'cm²', '平方厘米': 'cm²', 'mm2': 'mm²', 'mm^2': 'mm²', '平方毫米': 'mm²', '㎜²': 'mm²',
+    '立方': 'm³', '立方米': 'm³', '立米': 'm³', 'm3': 'm³', 'm^3': 'm³',
+    '立方厘米': 'cm³', 'cm3': 'cm³', 'cm^3': 'cm³',
+    '立方分米': 'dm³', 'dm3': 'dm³', 'dm^3': 'dm³',
+    'mm3': 'mm³', 'mm^3': 'mm³', '立方毫米': 'mm³',
+    '升': 'L', '公升': 'L', 'l': 'L', 'L': 'L', 'ml': 'cm³', 'mL': 'cm³', '毫升': 'cm³',
+    '米': 'm', 'M': 'm', 'cm': 'cm', '厘米': 'cm', 'mm': 'mm', '毫米': 'mm', 'km': 'km', '公里': 'km', '千米': 'km',
+    '平方公里': 'km²', '平方千米': 'km²',
+    '克': 'g', '千克': 'kg', '公斤': 'kg', 'Kg': 'kg', 'KG': 'kg', '吨': 't', 'T': 't', 'mg': 'mg'
+  }
+  const normalize = (u) => {
+    if (!u) return ''
+    const cleaned = String(u).trim()
+    return unitAliases[cleaned] || unitAliases[cleaned.toLowerCase()] || cleaned.toLowerCase()
+  }
+  const factors = {
+    weight: { mg: 0.000001, g: 0.001, kg: 1, t: 1000 }
+  }
+  const familyOf = (u) => {
+    if (Object.keys(factors.weight).includes(u)) return 'weight'
+    return null
+  }
+  const getFactor = (from, to) => {
+    const f = familyOf(from)
+    if (!f || f !== familyOf(to)) return null
+    const map = factors[f]
+    return map[from] / map[to]
+  }
+  const uFrom = normalize(fromUnit)
+  const uTo = normalize(toUnit)
+  let basePrice = matchedBaseMaterial.value.price
+  if (uFrom && uTo && uFrom !== uTo) {
+    const conv = getFactor(uFrom, uTo)
+    if (conv && conv !== 0) {
+      basePrice = basePrice / conv
+    }
+  }
+  const percentage = ((material.value.unit_price - basePrice) / basePrice) * 100
   return (percentage >= 0 ? '+' : '') + percentage.toFixed(1) + '%'
 }
 
 // 获取差异样式类
 const getDiffClass = () => {
   if (!matchedBaseMaterial.value || !material.value) return ''
-  const diff = material.value.unit_price - matchedBaseMaterial.value.price
+  const fromUnit = matchedBaseMaterial.value.unit
+  const toUnit = material.value.unit
+  const unitAliases = {
+    '㎡': 'm²', 'm2': 'm²', 'm^2': 'm²', '平方': 'm²', '平方米': 'm²', '平米': 'm²',
+    'cm2': 'cm²', 'cm^2': 'cm²', '平方厘米': 'cm²', 'mm2': 'mm²', 'mm^2': 'mm²', '平方毫米': 'mm²', '㎜²': 'mm²',
+    '立方': 'm³', '立方米': 'm³', '立米': 'm³', 'm3': 'm³', 'm^3': 'm³',
+    '立方厘米': 'cm³', 'cm3': 'cm³', 'cm^3': 'cm³',
+    '立方分米': 'dm³', 'dm3': 'dm³', 'dm^3': 'dm³',
+    'mm3': 'mm³', 'mm^3': 'mm³', '立方毫米': 'mm³',
+    '升': 'L', '公升': 'L', 'l': 'L', 'L': 'L', 'ml': 'cm³', 'mL': 'cm³', '毫升': 'cm³',
+    '米': 'm', 'M': 'm', 'cm': 'cm', '厘米': 'cm', 'mm': 'mm', '毫米': 'mm', 'km': 'km', '公里': 'km', '千米': 'km',
+    '平方公里': 'km²', '平方千米': 'km²',
+    '克': 'g', '千克': 'kg', '公斤': 'kg', 'Kg': 'kg', 'KG': 'kg', '吨': 't', 'T': 't', 'mg': 'mg'
+  }
+  const normalize = (u) => {
+    if (!u) return ''
+    const cleaned = String(u).trim()
+    return unitAliases[cleaned] || unitAliases[cleaned.toLowerCase()] || cleaned.toLowerCase()
+  }
+  const factors = {
+    weight: { mg: 0.000001, g: 0.001, kg: 1, t: 1000 }
+  }
+  const familyOf = (u) => {
+    if (Object.keys(factors.weight).includes(u)) return 'weight'
+    return null
+  }
+  const getFactor = (from, to) => {
+    const f = familyOf(from)
+    if (!f || f !== familyOf(to)) return null
+    const map = factors[f]
+    return map[from] / map[to]
+  }
+  const uFrom = normalize(fromUnit)
+  const uTo = normalize(toUnit)
+  let basePrice = matchedBaseMaterial.value.price
+  if (uFrom && uTo && uFrom !== uTo) {
+    const conv = getFactor(uFrom, uTo)
+    if (conv && conv !== 0) {
+      basePrice = basePrice / conv
+    }
+  }
+  const diff = material.value.unit_price - basePrice
   if (diff > 0) return 'positive'
   if (diff < 0) return 'negative'
   return 'neutral'

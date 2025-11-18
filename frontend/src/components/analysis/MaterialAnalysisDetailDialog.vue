@@ -112,7 +112,7 @@
             <div class="card-header">
               <el-icon><Connection /></el-icon>
               <span>匹配的市场信息价材料</span>
-              <el-tag type="success" size="small">已匹配</el-tag>
+              <el-tag type="success" size="small">基期信息价</el-tag>
             </div>
           </template>
           
@@ -144,13 +144,13 @@
             <el-col :xs="24" :sm="12" :md="8">
               <div class="info-item">
                 <span class="label">价格类型：</span>
-                <span class="value">{{ detailData.matched_base_material.price_type || '无' }}</span>
+                <span class="value">{{ getPriceTypeText(detailData.matched_base_material.price_type) }}</span>
               </div>
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
               <div class="info-item">
                 <span class="label">适用地区：</span>
-                <span class="value">{{ detailData.matched_base_material.region || '无' }}</span>
+                <span class="value">{{ getRegionText(detailData.matched_base_material.region) }}</span>
               </div>
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
@@ -161,8 +161,8 @@
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
               <div class="info-item">
-                <span class="label">生效日期：</span>
-                <span class="value">{{ formatDate(detailData.matched_base_material.effective_date) }}</span>
+                <span class="label">期数：</span>
+                <span class="value">{{ getPeriodText(detailData.matched_base_material) }}</span>
               </div>
             </el-col>
             <el-col :xs="24" :sm="12" :md="8">
@@ -172,6 +172,61 @@
               </div>
             </el-col>
           </el-row>
+
+          <div
+            v-if="detailData.matched_base_materials?.length"
+            class="price-history"
+          >
+            <el-divider>各期信息价记录</el-divider>
+            <el-table
+              :data="detailData.matched_base_materials"
+              border
+              size="small"
+              class="price-history-table"
+            >
+              <el-table-column label="期数" min-width="140">
+                <template #default="{ row }">
+                  <div class="period-cell">
+                    <span>{{ getPeriodText(row) }}</span>
+                    <el-tag
+                      v-if="row.is_current_match"
+                      size="small"
+                      type="success"
+                      class="current-tag"
+                    >
+                      当前匹配
+                    </el-tag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="信息价（除税）" min-width="150">
+                <template #default="{ row }">
+                  {{ formatCurrency(row.price_excluding_tax ?? row.price) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="信息价（含税）" min-width="150">
+                <template #default="{ row }">
+                  {{ formatCurrency(row.price_including_tax ?? row.price) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="计量单位" prop="unit" min-width="110" />
+              <el-table-column label="价格类型" min-width="130">
+                <template #default="{ row }">
+                  {{ getPriceTypeText(row.price_type) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="数据来源" min-width="160">
+                <template #default="{ row }">
+                  {{ row.price_source || row.source || '无' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="适用地区" min-width="140">
+                <template #default="{ row }">
+                  {{ getRegionText(row.region) }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </el-card>
 
         <!-- 未匹配提示 -->
@@ -207,7 +262,7 @@
             <div class="reasonability-assessment">
               <h4>价格合理性评估</h4>
               <el-row :gutter="20">
-                <el-col :xs="24" :sm="8">
+                <el-col :xs="24" :sm="12" :md="6">
                   <div class="assessment-item">
                     <span class="assessment-label">合理性判断：</span>
                     <el-tag 
@@ -218,7 +273,15 @@
                     </el-tag>
                   </div>
                 </el-col>
-                <el-col :xs="24" :sm="8">
+                <el-col :xs="24" :sm="12" :md="6">
+                  <div class="assessment-item">
+                    <span class="assessment-label">合同期平均价：</span>
+                    <span class="assessment-value">
+                      {{ formatCurrency(detailData.analysis_result.contract_average_price) }}
+                    </span>
+                  </div>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
                   <div class="assessment-item">
                     <span class="assessment-label">合价差：</span>
                     <span 
@@ -235,7 +298,7 @@
                     </span>
                   </div>
                 </el-col>
-                <el-col :xs="24" :sm="8">
+                <el-col :xs="24" :sm="12" :md="6">
                   <div class="assessment-item">
                     <span class="assessment-label">风险等级：</span>
                     <el-tag 
@@ -508,6 +571,70 @@ const formatDate = (dateString) => {
   return new Date(dateString).toLocaleDateString('zh-CN')
 }
 
+// 期数显示（优先 price_date，回退 effective_date）
+const getPeriodText = (obj) => {
+  if (!obj) return '无'
+  if (obj.price_date) {
+    const parts = String(obj.price_date).split('-')
+    const y = parts[0]
+    const m = parts[1] ? parts[1].padStart(2, '0') : ''
+    return y && m ? `${y}年${m}月` : obj.price_date
+  }
+  if (obj.effective_date) {
+    try {
+      const d = new Date(obj.effective_date)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      return `${y}年${m}月`
+    } catch (_) {
+      return formatDate(obj.effective_date)
+    }
+  }
+  return '无'
+}
+
+// 地区中文映射（常见省市与全国）
+const getRegionText = (region) => {
+  if (!region) return '无'
+  const map = {
+    beijing: '北京市',
+    shanghai: '上海市',
+    guangzhou: '广州市',
+    shenzhen: '深圳市',
+    hangzhou: '杭州市',
+    ningbo: '宁波市',
+    wenzhou: '温州市',
+    shaoxing: '绍兴市',
+    jiaxing: '嘉兴市',
+    huzhou: '湖州市',
+    jinhua: '金华市',
+    nanjing: '南京市',
+    suzhou: '苏州市',
+    wuxi: '无锡市',
+    changzhou: '常州市',
+    nantong: '南通市',
+    yangzhou: '扬州市',
+    xuzhou: '徐州市',
+    jinan: '济南市',
+    qingdao: '青岛市',
+    yantai: '烟台市',
+    weifang: '潍坊市',
+    zibo: '淄博市',
+    jining: '济宁市',
+    national: '全国'
+  }
+  return map[region] || region
+}
+
+// 价格类型中文映射
+const getPriceTypeText = (type) => {
+  const map = {
+    provincial: '省刊信息价',
+    municipal: '市刊信息价'
+  }
+  return map[type] || (type || '无')
+}
+
 // 获取分析状态类型
 const getAnalysisStatusType = (status) => {
   const typeMap = {
@@ -633,6 +760,24 @@ const getSearchUrls = (analysisResult) => {
 
     .project-info {
       margin-top: 16px;
+    }
+
+    .price-history {
+      margin-top: 16px;
+
+      .price-history-table {
+        margin-top: 12px;
+      }
+
+      .period-cell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .current-tag {
+        line-height: 1;
+      }
     }
 
     // 搜索网址样式

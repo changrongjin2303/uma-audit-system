@@ -45,6 +45,10 @@ class Project(Base):
     price_base_date = Column(String(20), nullable=True, comment="价格基准日期")
     analysis_precision = Column(String(20), default="standard", comment="分析精度")
 
+    # 合同工期（月精度，格式 YYYY-MM）
+    contract_start_date = Column(String(20), nullable=True, comment="合同工期开始 (YYYY-MM)")
+    contract_end_date = Column(String(20), nullable=True, comment="合同工期结束 (YYYY-MM)")
+
     # 分析设置信息
     base_price_date = Column(String(20), nullable=True, comment="基期信息价日期")
     base_price_province = Column(String(20), nullable=True, comment="基期信息价省份")

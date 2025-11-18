@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
+from loguru import logger
 
 from app.core.database import get_db
 from app.core.simple_auth import get_current_active_user, require_cost_engineer, SimpleUser
@@ -319,31 +320,53 @@ async def get_priced_materials_analysis(
         # 转换为前端需要的格式
         results = []
         for record in analysis_records:
-            api_data = record.api_response or {}
-            base_info = api_data.get('base_material_info', {})
-            
-            result_item = {
-                "material_id": record.material_id,
-                "material_name": record.material_name or "",
-                "specification": record.specification or "",
-                "unit": record.unit or "",
-                "quantity": float(record.quantity or 0),
-                "project_unit_price": api_data.get('project_unit_price', 0),
-                "base_unit_price": api_data.get('base_unit_price', 0),
-                "base_price_including_tax": api_data.get('base_price_including_tax', 0),
-                "base_price_excluding_tax": api_data.get('base_price_excluding_tax', 0),
-                "unit_price_difference": api_data.get('unit_price_difference', 0),
-                "total_price_difference": api_data.get('total_price_difference', 0),
-                "price_difference_rate": api_data.get('price_difference_rate', 0),
-                "has_difference": api_data.get('has_difference', False),
-                "difference_level": api_data.get('difference_level', 'normal'),
-                "base_material_name": base_info.get('name', ''),
-                "base_specification": base_info.get('specification', ''),
-                "source_type": base_info.get('source_type', ''),
-                "region": base_info.get('region', ''),
-                "analyzed_at": record.created_at.isoformat() if record.created_at else None
-            }
-            results.append(result_item)
+            try:
+                # 安全地解析 JSON 数据
+                api_data = record.api_response or {}
+                if isinstance(api_data, str):
+                    import json
+                    try:
+                        api_data = json.loads(api_data)
+                    except json.JSONDecodeError:
+                        api_data = {}
+                
+                base_info = api_data.get('base_material_info', {})
+                if not isinstance(base_info, dict):
+                    base_info = {}
+                
+                # 安全地转换数值类型
+                def safe_float(value, default=0.0):
+                    try:
+                        return float(value) if value is not None else default
+                    except (ValueError, TypeError):
+                        return default
+                
+                result_item = {
+                    "material_id": record.material_id,
+                    "material_name": record.material_name or "",
+                    "specification": record.specification or "",
+                    "unit": record.unit or "",
+                    "quantity": safe_float(record.quantity, 0),
+                    "project_unit_price": safe_float(api_data.get('project_unit_price'), 0),
+                    "base_unit_price": safe_float(api_data.get('base_unit_price'), 0),
+                    "base_price_including_tax": safe_float(api_data.get('base_price_including_tax'), 0),
+                    "base_price_excluding_tax": safe_float(api_data.get('base_price_excluding_tax'), 0),
+                    "unit_price_difference": safe_float(api_data.get('unit_price_difference'), 0),
+                    "total_price_difference": safe_float(api_data.get('total_price_difference'), 0),
+                    "price_difference_rate": safe_float(api_data.get('price_difference_rate'), 0),
+                    "has_difference": bool(api_data.get('has_difference', False)),
+                    "difference_level": api_data.get('difference_level', 'normal') or 'normal',
+                    "base_material_name": base_info.get('name', '') if isinstance(base_info, dict) else '',
+                    "base_specification": base_info.get('specification', '') if isinstance(base_info, dict) else '',
+                    "source_type": base_info.get('source_type', '') if isinstance(base_info, dict) else '',
+                    "region": base_info.get('region', '') if isinstance(base_info, dict) else '',
+                    "analyzed_at": record.created_at.isoformat() if record.created_at else None
+                }
+                results.append(result_item)
+            except Exception as e:
+                # 如果某条记录处理失败，记录日志但继续处理其他记录
+                logger.warning(f"处理材料 {record.material_id} 的分析结果时出错: {e}")
+                continue
         
         # 获取总数
         count_stmt = select(func.count(PriceAnalysis.id)).select_from(
@@ -605,7 +628,7 @@ async def get_material_analysis_detail(
     """获取单个材料的详细分析结果，包括原始材料信息、匹配的市场信息价材料信息和分析结果"""
     
     try:
-        from sqlalchemy import select
+        from sqlalchemy import select, and_, or_
         from sqlalchemy.orm import selectinload
         from app.models.project import ProjectMaterial
         from app.models.material import BaseMaterial
@@ -635,6 +658,81 @@ async def get_material_analysis_detail(
         project_query = select(Project).where(Project.id == project_material.project_id)
         project_result = await db.execute(project_query)
         project = project_result.scalar_one_or_none()
+        
+        # 日期格式化帮助函数
+        def normalize_year_month(value: Optional[str]) -> Optional[str]:
+            if not value:
+                return None
+            str_value = str(value).strip()
+            if not str_value:
+                return None
+            str_value = str_value.replace('年', '-').replace('月', '')
+            for sep in ['-', '/', '.']:
+                if sep in str_value:
+                    parts = [p for p in str_value.split(sep) if p]
+                    break
+            else:
+                if len(str_value) == 6 and str_value.isdigit():
+                    parts = [str_value[:4], str_value[4:]]
+                else:
+                    parts = [str_value[:4], str_value[4:]] if len(str_value) > 4 else [str_value, '1']
+            if len(parts) < 2:
+                return None
+            try:
+                year = int(parts[0])
+                month = int(parts[1])
+            except ValueError:
+                return None
+            month = max(1, min(month, 12))
+            return f"{year:04d}-{month:02d}"
+        
+        def year_month_tuple(value: Optional[str]) -> Optional[tuple]:
+            norm = normalize_year_month(value)
+            if not norm:
+                return None
+            parts = norm.split('-')
+            if len(parts) != 2:
+                return None
+            try:
+                return int(parts[0]), int(parts[1])
+            except ValueError:
+                return None
+        
+        def compare_year_month(a: Optional[str], b: Optional[str]) -> Optional[int]:
+            tuple_a = year_month_tuple(a)
+            tuple_b = year_month_tuple(b)
+            if not tuple_a or not tuple_b:
+                return None
+            if tuple_a < tuple_b:
+                return -1
+            if tuple_a > tuple_b:
+                return 1
+            return 0
+        
+        def is_within_contract(price_date: Optional[str], start_tuple: Optional[tuple], end_tuple: Optional[tuple]) -> bool:
+            ym_tuple = year_month_tuple(price_date)
+            if not ym_tuple:
+                return True
+            if start_tuple and ym_tuple < start_tuple:
+                return False
+            if end_tuple and ym_tuple > end_tuple:
+                return False
+            return True
+        
+        # 基期与合同工期信息
+        preferred_price_date = None
+        contract_start_date = None
+        contract_end_date = None
+        preferred_price_tuple = None
+        contract_start_tuple = None
+        contract_end_tuple = None
+        if project:
+            preferred_price_date = normalize_year_month(project.base_price_date or project.price_base_date)
+            preferred_price_tuple = year_month_tuple(preferred_price_date)
+            contract_start_date = normalize_year_month(project.contract_start_date)
+            contract_end_date = normalize_year_month(project.contract_end_date)
+            contract_start_tuple = year_month_tuple(contract_start_date)
+            contract_end_tuple = year_month_tuple(contract_end_date)
         
         # 获取匹配的市场信息价材料信息
         matched_base_material = None
@@ -673,28 +771,136 @@ async def get_material_analysis_detail(
                 "project_type": project.project_type
             } if project else None,
             "matched_base_material": None,
+            "matched_base_materials": [],
             "analysis_result": None
         }
         
         # 添加匹配的市场信息价材料信息
-        if matched_base_material:
-            detail_data["matched_base_material"] = {
-                "id": matched_base_material.id,
-                "name": matched_base_material.name,
-                "specification": matched_base_material.specification,
-                "unit": matched_base_material.unit,
-                "price": float(matched_base_material.price) if matched_base_material.price else None,
-                "price_type": matched_base_material.price_type,
-                "category": matched_base_material.category,
-                "subcategory": matched_base_material.subcategory,
-                "material_code": matched_base_material.material_code,
-                "brand": getattr(matched_base_material, 'brand', None),
-                "region": matched_base_material.region,
-                "source": matched_base_material.source,
-                "effective_date": matched_base_material.effective_date.isoformat() if matched_base_material.effective_date else None,
-                "created_at": matched_base_material.created_at.isoformat() if matched_base_material.created_at else None,
-                "updated_at": matched_base_material.updated_at.isoformat() if matched_base_material.updated_at else None
+        def serialize_base_material(base_material, preferred_date=None, matched_id=None):
+            is_current = False
+            if preferred_date and base_material.price_date:
+                is_current = normalize_year_month(base_material.price_date) == preferred_date
+            elif matched_id:
+                is_current = base_material.id == matched_id
+                
+            return {
+                "id": base_material.id,
+                "name": base_material.name,
+                "specification": base_material.specification,
+                "unit": base_material.unit,
+                "price": float(base_material.price) if base_material.price is not None else None,
+                "price_including_tax": float(base_material.price_including_tax) if base_material.price_including_tax is not None else None,
+                "price_excluding_tax": float(base_material.price_excluding_tax) if base_material.price_excluding_tax is not None else None,
+                "price_type": base_material.price_type,
+                "price_date": base_material.price_date,
+                "issue_period": (
+                    f"{base_material.price_date.split('-')[0]}年{base_material.price_date.split('-')[1].zfill(2)}月"
+                    if base_material.price_date else None
+                ),
+                "category": base_material.category,
+                "subcategory": base_material.subcategory,
+                "material_code": base_material.material_code,
+                "brand": getattr(base_material, 'brand', None),
+                "region": base_material.region,
+                "source": base_material.source,
+                "price_source": getattr(base_material, 'price_source', None),
+                "effective_date": base_material.effective_date.isoformat() if base_material.effective_date else None,
+                "created_at": base_material.created_at.isoformat() if base_material.created_at else None,
+                "updated_at": base_material.updated_at.isoformat() if base_material.updated_at else None,
+                "is_current_match": is_current
             }
+
+        if matched_base_material:
+            # 查找同一材料的其他期数信息价（优先使用材料编码，其次名称/规格/单位/地区）
+            related_conditions = []
+            if matched_base_material.material_code:
+                related_conditions.append(BaseMaterial.material_code == matched_base_material.material_code)
+            else:
+                related_conditions.append(BaseMaterial.name == matched_base_material.name)
+                if matched_base_material.specification:
+                    related_conditions.append(BaseMaterial.specification == matched_base_material.specification)
+                else:
+                    related_conditions.append(
+                        or_(
+                            BaseMaterial.specification.is_(None),
+                            BaseMaterial.specification == ""
+                        )
+                    )
+                if matched_base_material.unit:
+                    related_conditions.append(BaseMaterial.unit == matched_base_material.unit)
+                if matched_base_material.region:
+                    related_conditions.append(BaseMaterial.region == matched_base_material.region)
+                elif getattr(matched_base_material, 'province', None):
+                    related_conditions.append(BaseMaterial.province == matched_base_material.province)
+                if matched_base_material.price_type:
+                    related_conditions.append(BaseMaterial.price_type == matched_base_material.price_type)
+            
+            related_query = select(BaseMaterial).where(
+                and_(*related_conditions)
+            ).order_by(
+                BaseMaterial.price_date.desc(),
+                BaseMaterial.effective_date.desc()
+            )
+
+            related_result = await db.execute(related_query)
+            related_materials_all = related_result.scalars().all()
+
+            if not related_materials_all:
+                related_materials_all = [matched_base_material]
+
+            # 选择基于基期信息价日期的当前显示材料
+            selected_material = None
+            if preferred_price_tuple:
+                selected_material = next(
+                    (
+                        material
+                        for material in related_materials_all
+                        if year_month_tuple(material.price_date) == preferred_price_tuple
+                    ),
+                    None
+                )
+                if not selected_material:
+                    earlier_candidates = [
+                        material for material in related_materials_all
+                        if year_month_tuple(material.price_date)
+                        and year_month_tuple(material.price_date) <= preferred_price_tuple
+                    ]
+                    if earlier_candidates:
+                        selected_material = max(
+                            earlier_candidates,
+                            key=lambda m: year_month_tuple(m.price_date)
+                        )
+
+            if not selected_material:
+                selected_material = matched_base_material if matched_base_material else related_materials_all[0]
+
+            display_materials = [
+                material for material in related_materials_all
+                if is_within_contract(material.price_date, contract_start_tuple, contract_end_tuple)
+            ]
+
+            if not display_materials:
+                display_materials = related_materials_all.copy()
+
+            if selected_material and all(material.id != selected_material.id for material in display_materials):
+                display_materials.append(selected_material)
+
+            detail_data["matched_base_material"] = serialize_base_material(
+                selected_material,
+                preferred_date=preferred_price_date,
+                matched_id=selected_material.id if selected_material else None
+            )
+
+            detail_data["matched_base_materials"] = [
+                serialize_base_material(
+                    material,
+                    preferred_date=preferred_price_date,
+                    matched_id=selected_material.id if selected_material else None
+                )
+                for material in display_materials
+            ]
+        else:
+            detail_data["matched_base_material"] = None
         
         # 添加分析结果
         if analysis:
@@ -703,6 +909,8 @@ async def get_material_analysis_detail(
             unit_price_difference = api_response.get('unit_price_difference')
             analysis_quantity = api_response.get('quantity') or detail_data["project_material"].get('quantity')
             analysis_unit = api_response.get('unit') or detail_data["project_material"].get('unit')
+            contract_average_price = api_response.get('contract_average_price') or api_response.get('base_unit_price')
+            contract_period_prices = api_response.get('contract_period_prices')
 
             detail_data["analysis_result"] = {
                 "id": analysis.id,
@@ -729,7 +937,9 @@ async def get_material_analysis_detail(
                 "total_price_difference": float(total_price_difference) if total_price_difference is not None else None,
                 "unit_price_difference": float(unit_price_difference) if unit_price_difference is not None else None,
                 "quantity": float(analysis_quantity) if analysis_quantity is not None else None,
-                "unit": analysis_unit
+                "unit": analysis_unit,
+                "contract_average_price": float(contract_average_price) if contract_average_price is not None else None,
+                "contract_period_prices": contract_period_prices
             }
         
         return {
