@@ -673,22 +673,33 @@ const calculateFullDataStats = () => {
       if (columnIndex === '' || columnIndex === undefined) return ''
       
       if (row.data && availableColumns.value[columnIndex]) {
-        return row.data[availableColumns.value[columnIndex]] || ''
-      } else {
-        return row[`col_${columnIndex}`] || ''
+        const mappedValue = row.data[availableColumns.value[columnIndex]]
+        if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+          return mappedValue
+        }
       }
+      
+      const fallbackValue = row[`col_${columnIndex}`]
+      if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+        return fallbackValue
+      }
+      
+      return ''
     }
     
     const name = getValue('name') || ''
     const unit = getValue('unit') || ''
     const unitPrice = parseFloat(getValue('unit_price')) || 0
     const specification = getValue('specification') || ''
+    const materialCode = getValue('material_code') || ''
+    const quantity = parseFloat(getValue('quantity')) || 0
+    const quantityKey = formatQuantityKey(quantity)
     
     // 验证数据有效性
     const isValid = name.trim() !== '' && unit.trim() !== '' && unitPrice > 0 && !isNaN(unitPrice)
     
-    // 生成重复检测键（基于材料名称 + 规格型号 + 单位的组合）
-    const duplicateKey = `${name.trim()}_${specification.trim()}_${unit.trim()}`.toLowerCase()
+    // 生成重复检测键（基于材料名称 + 规格型号 + 单位 + 数量的组合）
+    const duplicateKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${unit.trim()}_${quantityKey}`.toLowerCase()
     
     const itemData = {
       index: i,
@@ -697,7 +708,9 @@ const calculateFullDataStats = () => {
       name,
       specification,
       unit,
-      unitPrice
+      unitPrice,
+      material_code: materialCode,
+      quantity
     }
     
     itemsWithKeys.push(itemData)
@@ -788,19 +801,29 @@ const processFullDataWithMapping = (sourceData) => {
       if (columnIndex === '' || columnIndex === undefined) return ''
       
       if (row.data && availableColumns.value[columnIndex]) {
-        return row.data[availableColumns.value[columnIndex]] || ''
-      } else {
-        return row[`col_${columnIndex}`] || ''
+        const mappedValue = row.data[availableColumns.value[columnIndex]]
+        if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+          return mappedValue
+        }
       }
+      
+      const fallbackValue = row[`col_${columnIndex}`]
+      if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+        return fallbackValue
+      }
+      
+      return ''
     }
       
     const name = getValue('name') || ''
     const specification = getValue('specification') || ''
     const unit = getValue('unit') || ''
     const unitPrice = parseFloat(getValue('unit_price')) || 0
+    const materialCode = getValue('material_code') || ''
     
     const item = {
       row_index: i,
+      material_code: materialCode,
       name: name,
       specification: specification,
       unit: unit,
@@ -813,7 +836,8 @@ const processFullDataWithMapping = (sourceData) => {
     }
     
     // 生成重复检测键
-    const duplicateKey = `${name.trim()}_${specification.trim()}_${unit.trim()}`.toLowerCase()
+    const quantityKey = formatQuantityKey(item.quantity)
+    const duplicateKey = `${materialCode.trim()}_${name.trim()}_${specification.trim()}_${unit.trim()}_${quantityKey}`.toLowerCase()
     item.duplicateKey = duplicateKey
     
     // 统计重复键出现次数
@@ -1176,6 +1200,14 @@ const getEditDistance = (str1, str2) => {
   return matrix[str2.length][str1.length]
 }
 
+const formatQuantityKey = (value) => {
+  const num = parseFloat(value)
+  if (Number.isFinite(num)) {
+    return num.toFixed(4)
+  }
+  return '0.0000'
+}
+
 // 获取字段预览
 const getFieldPreview = (field) => {
   const columnIndex = fieldMapping[field]
@@ -1256,14 +1288,19 @@ const previewFileData = async () => {
         const columnIndex = fieldMapping[fieldName]
         if (columnIndex === '' || columnIndex === undefined) return ''
         
-        // 支持两种数据访问方式
         if (row.data && availableColumns.value[columnIndex]) {
-          // 使用列名访问
-          return row.data[availableColumns.value[columnIndex]] || ''
-        } else {
-          // 使用索引访问（向后兼容）
-          return row[`col_${columnIndex}`] || ''
+          const mappedValue = row.data[availableColumns.value[columnIndex]]
+          if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+            return mappedValue
+          }
         }
+        
+        const fallbackValue = row[`col_${columnIndex}`]
+        if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+          return fallbackValue
+        }
+        
+        return ''
       }
         
         const name = getValue('name') || ''
@@ -1273,6 +1310,7 @@ const previewFileData = async () => {
         
         const item = {
           row_index: i,
+          material_code: getValue('material_code') || '',
           name: name,
           specification: specification,
           unit: unit,
@@ -1286,7 +1324,8 @@ const previewFileData = async () => {
         
         // 生成重复检测键 - 改进算法：考虑价格差异
         // 如果价格差异超过5%，则认为不是重复项
-        const baseKey = `${name.trim()}_${specification.trim()}_${unit.trim()}`.toLowerCase()
+        const quantityKey = formatQuantityKey(item.quantity)
+        const baseKey = `${item.material_code.trim()}_${name.trim()}_${specification.trim()}_${unit.trim()}_${quantityKey}`.toLowerCase()
         const priceKey = Math.round(unitPrice * 100) // 精确到分，避免浮点数误差
         const duplicateKey = `${baseKey}_${priceKey}`
         item.duplicateKey = duplicateKey
@@ -1389,17 +1428,27 @@ const getImportCount = () => {
       if (columnIndex === '' || columnIndex === undefined) return ''
       
       if (row.data && availableColumns.value[columnIndex]) {
-        return row.data[availableColumns.value[columnIndex]] || ''
-      } else {
-        return row[`col_${columnIndex}`] || ''
+        const mappedValue = row.data[availableColumns.value[columnIndex]]
+        if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+          return mappedValue
+        }
       }
+      
+      const fallbackValue = row[`col_${columnIndex}`]
+      if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+        return fallbackValue
+      }
+      
+      return ''
     }
     
     const item = {
+      material_code: getValue('material_code') || '',
       name: getValue('name') || '',
       specification: getValue('specification') || '',
       unit: getValue('unit') || '',
       unit_price: parseFloat(getValue('unit_price')) || 0,
+      quantity: parseFloat(getValue('quantity')) || 0,
       valid: true,
       duplicate: false
     }
@@ -1419,7 +1468,8 @@ const getImportCount = () => {
     }
     
     // 生成重复检测键 - 改进算法：考虑价格差异
-    const baseKey = `${item.name.trim()}_${item.specification.trim()}_${item.unit.trim()}`.toLowerCase()
+    const quantityKey = formatQuantityKey(item.quantity)
+    const baseKey = `${item.material_code.trim()}_${item.name.trim()}_${item.specification.trim()}_${item.unit.trim()}_${quantityKey}`.toLowerCase()
     const priceKey = Math.round(item.unit_price * 100) // 精确到分，避免浮点数误差
     const duplicateKey = `${baseKey}_${priceKey}`
     item.duplicateKey = duplicateKey
@@ -1478,13 +1528,22 @@ const startImport = async () => {
         if (columnIndex === '' || columnIndex === undefined) return ''
         
         if (row.data && availableColumns.value[columnIndex]) {
-          return row.data[availableColumns.value[columnIndex]] || ''
-        } else {
-          return row[`col_${columnIndex}`] || ''
+          const mappedValue = row.data[availableColumns.value[columnIndex]]
+          if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+            return mappedValue
+          }
         }
+        
+        const fallbackValue = row[`col_${columnIndex}`]
+        if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+          return fallbackValue
+        }
+        
+        return ''
       }
       
       const item = {
+        material_code: getValue('material_code') || '',
         name: getValue('name') || '',
         specification: getValue('specification') || '',
         unit: getValue('unit') || '',
@@ -1510,7 +1569,8 @@ const startImport = async () => {
       }
       
       // 生成重复检测键 - 改进算法：考虑价格差异
-      const baseKey = `${item.name.trim()}_${item.specification.trim()}_${item.unit.trim()}`.toLowerCase()
+      const quantityKey = formatQuantityKey(item.quantity)
+      const baseKey = `${item.material_code.trim()}_${item.name.trim()}_${item.specification.trim()}_${item.unit.trim()}_${quantityKey}`.toLowerCase()
       const priceKey = Math.round(item.unit_price * 100) // 精确到分，避免浮点数误差
       const duplicateKey = `${baseKey}_${priceKey}`
       item.duplicateKey = duplicateKey
@@ -1543,6 +1603,7 @@ const startImport = async () => {
       
       // 准备项目材料数据结构
       const materialData = {
+        serial_number: item.material_code || '',
         name: item.name || '',
         specification: item.specification || '',
         unit: item.unit || '',
@@ -1639,6 +1700,7 @@ const resetAnalysis = () => {
 
 const resetMapping = () => {
   Object.assign(fieldMapping, {
+    material_code: '',
     name: '',
     specification: '',
     unit: '',

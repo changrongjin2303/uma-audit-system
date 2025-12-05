@@ -40,7 +40,7 @@
               <el-icon><Box /></el-icon>
             </div>
             <div class="stat-content">
-              <div class="stat-number">{{ realTimeStats.total_materials }}</div>
+              <div class="stat-number">{{ projectStats.total_materials }}</div>
               <div class="stat-label">材料总数</div>
             </div>
           </div>
@@ -64,7 +64,7 @@
               <el-icon><SuccessFilled /></el-icon>
             </div>
             <div class="stat-content">
-              <div class="stat-number">{{ realTimeStats.matched_materials }}</div>
+              <div class="stat-number">{{ projectStats.matched_materials }}</div>
               <div class="stat-label">已匹配材料</div>
             </div>
           </div>
@@ -558,11 +558,15 @@
             <el-form-item label="基期信息价区县">
               <el-select v-model="editForm.base_price_district" placeholder="选择区县" clearable style="width: 100%">
                 <el-option label="上城区" value="330102" />
-                <el-option label="拱墅区" value="330105" />
-                <el-option label="西湖区" value="330106" />
-                <el-option label="滨江区" value="330108" />
-                <el-option label="萧山区" value="330109" />
+                <el-option label="拱墅区" value="330104" />
+                <el-option label="西湖区" value="330105" />
+                <el-option label="滨江区" value="330106" />
+                <el-option label="萧山区" value="330107" />
                 <el-option label="余杭区" value="330110" />
+                <el-option label="临平区" value="330113" />
+                <el-option label="钱塘区" value="330114" />
+                <el-option label="富阳区" value="330111" />
+                <el-option label="临安区" value="330112" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -657,6 +661,49 @@
       </template>
     </el-dialog>
 
+    <!-- AI模型选择对话框 -->
+    <el-dialog
+      v-model="showModelSelectDialog"
+      title="选择AI分析模型"
+      width="480px"
+      :close-on-click-modal="false"
+      center
+    >
+      <div class="model-select-content">
+        <p class="model-select-hint">请选择用于价格分析的AI大模型：</p>
+        <el-radio-group v-model="selectedAIModel" class="model-radio-group">
+          <el-radio value="dashscope" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><Promotion /></el-icon>
+                通义千问 (Qwen)
+              </div>
+              <div class="model-desc">阿里云通义千问大模型，支持联网搜索</div>
+            </div>
+          </el-radio>
+          <el-radio value="doubao" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><MagicStick /></el-icon>
+                豆包 (Doubao)
+              </div>
+              <div class="model-desc">字节跳动豆包大模型，高性能推理</div>
+            </div>
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <el-button @click="showModelSelectDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          :disabled="!selectedAIModel"
+          @click="confirmStartPriceAnalysis"
+        >
+          开始分析
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- AI分析进度弹窗 -->
     <el-dialog
       v-model="showAnalysisProgressDialog"
@@ -741,7 +788,8 @@ import {
   Search,
   Delete,
   DataAnalysis,
-  InfoFilled
+  InfoFilled,
+  MagicStick
 } from '@element-plus/icons-vue'
 import {
   getProject,
@@ -764,6 +812,101 @@ import { formatDate, formatNumber } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
+
+const PROVINCE_MAP = {
+  '110000': '北京市',
+  '120000': '天津市',
+  '130000': '河北省',
+  '140000': '山西省',
+  '150000': '内蒙古自治区',
+  '210000': '辽宁省',
+  '220000': '吉林省',
+  '230000': '黑龙江省',
+  '310000': '上海市',
+  '320000': '江苏省',
+  '330000': '浙江省',
+  '340000': '安徽省',
+  '350000': '福建省',
+  '360000': '江西省',
+  '370000': '山东省',
+  '410000': '河南省',
+  '420000': '湖北省',
+  '430000': '湖南省',
+  '440000': '广东省',
+  '450000': '广西壮族自治区',
+  '460000': '海南省',
+  '500000': '重庆市',
+  '510000': '四川省',
+  '520000': '贵州省',
+  '530000': '云南省',
+  '540000': '西藏自治区',
+  '610000': '陕西省',
+  '620000': '甘肃省',
+  '630000': '青海省',
+  '640000': '宁夏回族自治区',
+  '650000': '新疆维吾尔自治区'
+}
+
+const CITY_MAP = {
+  '110100': '北京市',
+  '120100': '天津市',
+  '130100': '石家庄市',
+  '140100': '太原市',
+  '150100': '呼和浩特市',
+  '210100': '沈阳市',
+  '220100': '长春市',
+  '230100': '哈尔滨市',
+  '310100': '上海市',
+  '320100': '南京市',
+  '330100': '杭州市',
+  '340100': '合肥市',
+  '350100': '福州市',
+  '360100': '南昌市',
+  '370100': '济南市',
+  '410100': '郑州市',
+  '420100': '武汉市',
+  '430100': '长沙市',
+  '440100': '广州市',
+  '450100': '南宁市',
+  '460100': '海口市',
+  '500100': '重庆市',
+  '510100': '成都市',
+  '520100': '贵阳市',
+  '530100': '昆明市',
+  '540100': '拉萨市',
+  '610100': '西安市',
+  '620100': '兰州市',
+  '630100': '西宁市',
+  '640100': '银川市',
+  '650100': '乌鲁木齐市'
+}
+
+const DISTRICT_MAP = {
+  // 杭州市区（2021年行政区划调整后）
+  '330102': '上城区',
+  '330104': '拱墅区',
+  '330105': '西湖区',
+  '330106': '滨江区',
+  '330107': '萧山区',
+  '330108': '余杭区',      // 旧余杭区编码
+  '330109': '富阳区',
+  '330110': '余杭区',      // 新余杭区编码
+  '330111': '富阳区',
+  '330112': '临安区',
+  '330113': '临平区',
+  '330114': '钱塘区',
+  '330122': '桐庐县',
+  '330127': '淳安县',
+  '330182': '建德市',
+  // 历史区划（已合并，保留兼容）
+  '330101': '上城区',
+  '330103': '江干区'
+}
+
+const resolveRegionName = (code, map) => {
+  if (!code) return null
+  return map[code] || code
+}
 
 // 响应式数据
 const loading = ref(false)
@@ -842,6 +985,10 @@ const analysisState = reactive({
 // 分析进度弹窗显示状态
 const showAnalysisProgressDialog = ref(false)
 
+// AI模型选择相关
+const showModelSelectDialog = ref(false)
+const selectedAIModel = ref('dashscope') // 默认使用通义千问
+
 // 编辑表单数据
 const editForm = reactive({
   name: '',
@@ -881,48 +1028,7 @@ const pagination = reactive({
 })
 
 // 计算属性
-const filteredMaterials = computed(() => {
-  // 首先按Tab筛选
-  let result = []
-  switch (activeTab.value) {
-    case 'matched':
-      // 已匹配的材料 - 有市场信息价材料ID且匹配状态为true
-      result = materials.value.filter(m => m.is_matched && m.matched_material_id)
-      break
-    case 'unmatched':
-      // 未匹配的材料（无信息价材料） - 没有匹配或匹配状态为false
-      result = materials.value.filter(m => !m.is_matched || !m.matched_material_id)
-      break
-    default:
-      result = materials.value
-  }
-
-  // 应用搜索关键词过滤
-  if (searchFilters.keyword) {
-    const keyword = searchFilters.keyword.toLowerCase()
-    result = result.filter(m => {
-      return (m.material_name && m.material_name.toLowerCase().includes(keyword)) ||
-             (m.material_code && m.material_code.toLowerCase().includes(keyword)) ||
-             (m.specification && m.specification.toLowerCase().includes(keyword))
-    })
-  }
-
-  // 应用单位过滤
-  if (searchFilters.unit) {
-    result = result.filter(m => m.unit === searchFilters.unit)
-  }
-
-  // 应用匹配状态过滤
-  if (searchFilters.matchStatus) {
-    if (searchFilters.matchStatus === 'matched') {
-      result = result.filter(m => m.is_matched && m.matched_material_id)
-    } else if (searchFilters.matchStatus === 'unmatched') {
-      result = result.filter(m => !m.is_matched || !m.matched_material_id)
-    }
-  }
-
-  return result
-})
+const filteredMaterials = computed(() => materials.value)
 
 // 实时统计计算属性
 const realTimeStats = computed(() => {
@@ -1012,6 +1118,12 @@ const fetchMaterials = async () => {
       page: pagination.page,
       size: pagination.size
     }
+    if (searchFilters.keyword && searchFilters.keyword.trim()) {
+      params.keyword = searchFilters.keyword.trim()
+    }
+    if (searchFilters.unit) {
+      params.unit = searchFilters.unit
+    }
     if (activeTab.value === 'matched') {
       params.is_matched = true
     } else if (activeTab.value === 'unmatched') {
@@ -1098,107 +1210,14 @@ const getProjectTypeText = (type) => {
 const getLocationText = (project) => {
   const parts = []
 
-  // 省份映射
-  const provinceMap = {
-    '110000': '北京市',
-    '120000': '天津市',
-    '130000': '河北省',
-    '140000': '山西省',
-    '150000': '内蒙古自治区',
-    '210000': '辽宁省',
-    '220000': '吉林省',
-    '230000': '黑龙江省',
-    '310000': '上海市',
-    '320000': '江苏省',
-    '330000': '浙江省',
-    '340000': '安徽省',
-    '350000': '福建省',
-    '360000': '江西省',
-    '370000': '山东省',
-    '410000': '河南省',
-    '420000': '湖北省',
-    '430000': '湖南省',
-    '440000': '广东省',
-    '450000': '广西壮族自治区',
-    '460000': '海南省',
-    '500000': '重庆市',
-    '510000': '四川省',
-    '520000': '贵州省',
-    '530000': '云南省',
-    '540000': '西藏自治区',
-    '610000': '陕西省',
-    '620000': '甘肃省',
-    '630000': '青海省',
-    '640000': '宁夏回族自治区',
-    '650000': '新疆维吾尔自治区'
-  }
+  const provinceName = resolveRegionName(project.base_price_province, PROVINCE_MAP)
+  if (provinceName) parts.push(provinceName)
 
-  // 城市映射（简化版，只包含主要城市）
-  const cityMap = {
-    '110100': '北京市',
-    '120100': '天津市',
-    '130100': '石家庄市',
-    '140100': '太原市',
-    '150100': '呼和浩特市',
-    '210100': '沈阳市',
-    '220100': '长春市',
-    '230100': '哈尔滨市',
-    '310100': '上海市',
-    '320100': '南京市',
-    '330100': '杭州市',
-    '340100': '合肥市',
-    '350100': '福州市',
-    '360100': '南昌市',
-    '370100': '济南市',
-    '410100': '郑州市',
-    '420100': '武汉市',
-    '430100': '长沙市',
-    '440100': '广州市',
-    '450100': '南宁市',
-    '460100': '海口市',
-    '500100': '重庆市',
-    '510100': '成都市',
-    '520100': '贵阳市',
-    '530100': '昆明市',
-    '540100': '拉萨市',
-    '610100': '西安市',
-    '620100': '兰州市',
-    '630100': '西宁市',
-    '640100': '银川市',
-    '650100': '乌鲁木齐市'
-  }
+  const cityName = resolveRegionName(project.base_price_city, CITY_MAP)
+  if (cityName) parts.push(cityName)
 
-  // 区县映射（杭州区县示例）
-  const districtMap = {
-    '330102': '上城区',
-    '330103': '下城区',
-    '330104': '江干区',
-    '330105': '拱墅区',
-    '330106': '西湖区',
-    '330108': '滨江区',
-    '330109': '萧山区',
-    '330110': '余杭区',
-    '330111': '富阳区',
-    '330112': '临安区',
-    '330113': '临平区',
-    '330114': '桐庐区',
-    '330122': '建德县'
-  }
-
-  if (project.base_price_province) {
-    const provinceName = provinceMap[project.base_price_province] || project.base_price_province
-    parts.push(provinceName)
-  }
-
-  if (project.base_price_city) {
-    const cityName = cityMap[project.base_price_city] || project.base_price_city
-    parts.push(cityName)
-  }
-
-  if (project.base_price_district) {
-    const districtName = districtMap[project.base_price_district] || project.base_price_district
-    parts.push(districtName)
-  }
+  const districtName = resolveRegionName(project.base_price_district, DISTRICT_MAP)
+  if (districtName) parts.push(districtName)
 
   return parts.length > 0 ? parts.join(' ') : '未设置'
 }
@@ -1329,10 +1348,13 @@ const resetSearchFilters = () => {
   searchFilters.unit = ''
   searchFilters.matchStatus = ''
   pagination.page = 1
+  fetchMaterials()
 }
 
 const handleSearchClear = () => {
   searchFilters.keyword = ''
+  pagination.page = 1
+  fetchMaterials()
 }
 
 // 操作方法
@@ -1352,12 +1374,19 @@ const startMaterialIdentification = async () => {
     loading.value = true
     ElMessage.info('正在进行材料匹配分析...')
 
-    // 调用材料匹配API - 简单匹配模式
+    const provinceName = resolveRegionName(project.value?.base_price_province, PROVINCE_MAP)
+    const cityName = resolveRegionName(project.value?.base_price_city, CITY_MAP)
+    const districtName = resolveRegionName(project.value?.base_price_district, DISTRICT_MAP)
+
+    // 调用材料匹配API - 三级匹配模式
     const result = await matchProjectMaterials(route.params.id, {
       batchSize: 100,
       autoMatchThreshold: 0.85,
-      // 不启用三级地理匹配，使用简单匹配
-      enableHierarchicalMatching: false
+      enableHierarchicalMatching: true,
+      basePriceDate: project.value?.base_price_date || null,
+      basePriceProvince: provinceName,
+      basePriceCity: cityName,
+      basePriceDistrict: districtName
     })
 
     console.log('材料匹配结果:', result)
@@ -1382,7 +1411,18 @@ const startMaterialIdentification = async () => {
 
 // AI价格分析 - 分析未匹配材料的价格
 const startPriceAnalysis = async () => {
-  console.log('开始AI价格分析流程')
+  console.log('开始AI价格分析流程 - 显示模型选择对话框')
+  // 显示模型选择对话框
+  showModelSelectDialog.value = true
+}
+
+// 确认开始AI价格分析（模型选择后）
+const confirmStartPriceAnalysis = async () => {
+  // 关闭模型选择对话框
+  showModelSelectDialog.value = false
+  
+  const modelName = selectedAIModel.value === 'dashscope' ? '通义千问' : '豆包'
+  console.log('用户选择的AI模型:', modelName)
   
   try {
     // 获取基本信息
@@ -1391,8 +1431,8 @@ const startPriceAnalysis = async () => {
     const actionText = isReanalysis ? '重新分析' : '开始分析'
     const titleText = isReanalysis ? '确认AI重新分析' : '确认AI价格分析'
     const messageText = isReanalysis 
-      ? `确定要重新分析吗？系统将使用AI大模型对${unmatched}个未匹配的材料重新进行网络搜索，覆盖现有的分析结果。这个过程可能需要一些时间。`
-      : `确定要开始AI价格分析吗？系统将使用AI大模型对${unmatched}个未匹配的材料进行网络搜索，获取市场合理价格并与项目价格对比分析。这个过程可能需要一些时间。`
+      ? `确定要使用 ${modelName} 重新分析吗？系统将对${unmatched}个未匹配的材料重新进行网络搜索，覆盖现有的分析结果。这个过程可能需要一些时间。`
+      : `确定要使用 ${modelName} 开始AI价格分析吗？系统将对${unmatched}个未匹配的材料进行网络搜索，获取市场合理价格并与项目价格对比分析。这个过程可能需要一些时间。`
     
     console.log('显示确认对话框')
     await ElMessageBox.confirm(messageText, titleText, {
@@ -1447,28 +1487,53 @@ const startPriceAnalysis = async () => {
     const materialIds = unmatchedMaterials.map(m => m.id)
     console.log('材料ID列表:', materialIds)
     
-    // 使用预估进度，避免过度的API调用导致闪烁
-    let estimatedProgress = 0
+    // 使用平滑的预估进度，避免前期过快/后期卡顿
+    const maxSimulatedProgress = 95
+    const simulateDurationMs = Math.min(
+      Math.max(unmatchedMaterials.length * 3000, 45000),
+      240000
+    )
+    const progressStartAt = Date.now()
     const progressInterval = setInterval(() => {
-      if (analysisState.isAnalyzing && estimatedProgress < 90) {
-        estimatedProgress += Math.random() * 5 + 2 // 每次增加2-7%
-        analysisState.progress = Math.min(estimatedProgress, 90)
-
-        const currentMaterial = Math.floor(estimatedProgress / 90 * unmatchedMaterials.length) + 1
-        analysisState.currentStep = `正在分析第 ${currentMaterial} 个材料...`
-        analysisState.completedSteps = Math.floor(estimatedProgress / 90 * unmatchedMaterials.length)
+      if (!analysisState.isAnalyzing) {
+        clearInterval(progressInterval)
+        return
       }
-    }, 3000) // 每3秒更新一次，减少频率
+
+      const elapsed = Date.now() - progressStartAt
+      const rawRatio = Math.min(elapsed / simulateDurationMs, 1)
+      const easedRatio = 1 - Math.pow(1 - rawRatio, 2) // ease-out，前慢后快
+      const simulated = 5 + easedRatio * (maxSimulatedProgress - 5)
+
+      analysisState.progress = Math.min(simulated, maxSimulatedProgress)
+
+      if (analysisState.totalSteps > 0) {
+        const estimatedCompleted = Math.min(
+          analysisState.totalSteps,
+          Math.max(0, Math.round(easedRatio * analysisState.totalSteps))
+        )
+        analysisState.completedSteps = estimatedCompleted
+        const currentMaterial = Math.min(
+          analysisState.totalSteps,
+          Math.max(estimatedCompleted + 1, 1)
+        )
+        analysisState.currentStep = estimatedCompleted >= analysisState.totalSteps
+          ? '正在整理分析结果...'
+          : `正在分析第 ${currentMaterial} 个材料...`
+      } else {
+        analysisState.currentStep = '正在准备分析数据...'
+      }
+    }, 1500)
     
     try {
       console.log('调用批量分析API')
       
-      // 调用API
+      // 调用API - 使用用户选择的模型
       const apiData = {
         material_ids: materialIds,
         force_reanalyze: isReanalysis,
         batch_size: 5,
-        preferred_provider: 'dashscope'
+        preferred_provider: selectedAIModel.value
       }
       console.log('API请求参数:', apiData)
       
@@ -2205,8 +2270,16 @@ onUnmounted(() => {
 
 .stats-row {
   margin-bottom: 20px;
+  display: flex;
+  flex-wrap: wrap;
+
+  :deep(.el-col) {
+    display: flex;
+  }
 
   .stat-card {
+    flex: 1;
+    width: 100%;
     background: white;
     border-radius: 8px;
     padding: 20px;
@@ -2936,6 +3009,77 @@ onUnmounted(() => {
       
       .tip-content p {
         font-size: 12px;
+      }
+    }
+  }
+}
+
+// AI模型选择对话框样式
+.model-select-content {
+  padding: 0 20px;
+  
+  .model-select-hint {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    color: #606266;
+    text-align: center;
+  }
+  
+  .model-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    
+    .model-radio-item {
+      width: 100%;
+      height: auto !important;
+      padding: 16px 20px !important;
+      margin: 0 !important;
+      border-radius: 12px !important;
+      transition: all 0.3s ease;
+      
+      &:hover {
+        border-color: #409eff;
+        box-shadow: 0 4px 12px rgba(64, 158, 255, 0.15);
+      }
+      
+      &.is-checked {
+        border-color: #409eff;
+        background: linear-gradient(135deg, rgba(64, 158, 255, 0.08) 0%, rgba(64, 158, 255, 0.02) 100%);
+        box-shadow: 0 4px 16px rgba(64, 158, 255, 0.2);
+      }
+      
+      :deep(.el-radio__input) {
+        margin-top: 4px;
+      }
+      
+      :deep(.el-radio__label) {
+        padding-left: 12px;
+        width: 100%;
+      }
+      
+      .model-info {
+        .model-name {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 16px;
+          font-weight: 600;
+          color: #303133;
+          margin-bottom: 6px;
+          
+          .el-icon {
+            font-size: 20px;
+            color: #409eff;
+          }
+        }
+        
+        .model-desc {
+          font-size: 13px;
+          color: #909399;
+          line-height: 1.4;
+        }
       }
     }
   }

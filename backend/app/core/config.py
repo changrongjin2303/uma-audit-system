@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     DASHSCOPE_MODEL: str = "qwen3-max"
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     
+    # 豆包配置
+    DOUBAO_API_KEY: Optional[str] = None
+    DOUBAO_MODEL: str = "doubao-seed-1-6-251015"
+    DOUBAO_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+
+    # DeepSeek配置
+    DEEPSEEK_API_KEY: Optional[str] = None
+    DEEPSEEK_MODEL: str = "deepseek-v3-1-terminus"
+    DEEPSEEK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+    
     # 百度文心一言配置
     BAIDU_API_KEY: Optional[str] = None
     BAIDU_SECRET_KEY: Optional[str] = None

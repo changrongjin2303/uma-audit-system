@@ -2,7 +2,7 @@
   <el-dialog
     v-model="dialogVisible"
     title="材料分析详情"
-    width="90%"
+    width="95%"
     center
     destroy-on-close
     class="analysis-detail-dialog"
@@ -261,8 +261,29 @@
             <!-- 合理性评估 -->
             <div class="reasonability-assessment">
               <h4>价格合理性评估</h4>
+              
+              <!-- 单位转换提示 -->
+              <el-alert
+                v-if="unitConversionInfo?.needsConversion"
+                :title="`单位已转换：市场信息价单位(${unitConversionInfo.baseUnit}) → 项目材料单位(${unitConversionInfo.projectUnit})`"
+                :description="`基期信息价 ${formatCurrency(detailData.matched_base_material?.price, false, 2)}/${unitConversionInfo.baseUnit} = ${formatCurrency(convertedBasePrice, false, 4)}/${unitConversionInfo.projectUnit}`"
+                type="info"
+                :closable="false"
+                show-icon
+                class="unit-conversion-alert"
+              />
+              <el-alert
+                v-else-if="unitConversionInfo && !unitConversionInfo.canConvert && unitConversionInfo.projectUnit !== unitConversionInfo.baseUnit"
+                :title="`单位不兼容警告`"
+                :description="`项目材料单位(${unitConversionInfo.projectUnit})与市场信息价单位(${unitConversionInfo.baseUnit})无法自动转换，价格对比结果可能不准确`"
+                type="warning"
+                :closable="false"
+                show-icon
+                class="unit-conversion-alert"
+              />
+              
               <el-row :gutter="20">
-                <el-col :xs="24" :sm="12" :md="6">
+                <el-col :xs="24" :sm="12" :md="4">
                   <div class="assessment-item">
                     <span class="assessment-label">合理性判断：</span>
                     <el-tag 
@@ -273,32 +294,66 @@
                     </el-tag>
                   </div>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="6">
+                <el-col :xs="24" :sm="12" :md="4">
                   <div class="assessment-item">
-                    <span class="assessment-label">合同期平均价：</span>
-                    <span class="assessment-value">
-                      {{ formatCurrency(detailData.analysis_result.contract_average_price) }}
-                    </span>
-                  </div>
-                </el-col>
-                <el-col :xs="24" :sm="12" :md="6">
-                  <div class="assessment-item">
-                    <span class="assessment-label">合价差：</span>
+                    <span class="assessment-label">价格差异：</span>
                     <span 
                       class="assessment-value"
                       :class="{
-                        'positive': detailData.analysis_result.total_price_difference > 0,
-                        'negative': detailData.analysis_result.total_price_difference < 0
+                        'positive': priceDifference > 0,
+                        'negative': priceDifference < 0
                       }"
                     >
-                      {{ formatCurrency(detailData.analysis_result.total_price_difference, true) }}
-                      <span v-if="detailData.analysis_result.quantity" class="quantity-hint">
-                        （数量：{{ formatNumber(detailData.analysis_result.quantity) }} {{ detailData.analysis_result.unit || '' }}）
+                      {{ formatCurrency(priceDifference, true) }}
+                      <span v-if="unitConversionInfo?.needsConversion" class="unit-hint">
+                        /{{ unitConversionInfo.projectUnit }}
                       </span>
                     </span>
                   </div>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="6">
+                <el-col :xs="24" :sm="12" :md="4">
+                  <div class="assessment-item">
+                    <span class="assessment-label">合同期平均价：</span>
+                    <span class="assessment-value">
+                      {{ formatCurrency(convertedContractAvgPrice) }}
+                      <span v-if="unitConversionInfo?.needsConversion" class="unit-hint">
+                        /{{ unitConversionInfo.projectUnit }}
+                      </span>
+                    </span>
+                  </div>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="4">
+                  <div class="assessment-item">
+                    <span class="assessment-label">风险幅度：</span>
+                    <span 
+                      class="assessment-value"
+                      :class="{
+                        'positive': riskRate > 0,
+                        'negative': riskRate < 0
+                      }"
+                    >
+                      {{ formatPercentage(riskRate, true) }}
+                    </span>
+                  </div>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="4">
+                  <div class="assessment-item">
+                    <span class="assessment-label">调差：</span>
+                    <span 
+                      class="assessment-value"
+                      :class="{
+                        'positive': priceAdjustment > 0,
+                        'negative': priceAdjustment < 0
+                      }"
+                    >
+                      {{ formatCurrency(priceAdjustment, true) }}
+                      <span v-if="detailData.analysis_result.quantity" class="quantity-hint">
+                        （数量：{{ formatNumber(detailData.analysis_result.quantity) }} {{ detailData.project_material?.unit || detailData.analysis_result.unit || '' }}）
+                      </span>
+                    </span>
+                  </div>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="4">
                   <div class="assessment-item">
                     <span class="assessment-label">风险等级：</span>
                     <el-tag 
@@ -332,6 +387,21 @@
                   </template>
                 </el-table-column>
                 <el-table-column prop="timeliness" label="时效性" min-width="120" align="center" />
+                <el-table-column prop="price_range" label="预测价格区间" min-width="160" align="center">
+                  <template #default="{ row }">
+                    <span class="price-range-cell">{{ row.price_range || '—' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="sample_description" label="样本描述" min-width="200" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <span>{{ row.sample_description || '—' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="notes" label="可选补充" min-width="200" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <span>{{ row.notes || '—' }}</span>
+                  </template>
+                </el-table-column>
                 <el-table-column label="可靠性评级" min-width="180" align="center">
                   <template #default="{ row }">
                     <div class="reliability-cell">
@@ -384,6 +454,39 @@
                   </div>
                 </el-col>
               </el-row>
+            </div>
+
+            <!-- 分析历史 -->
+            <div v-if="analysisHistory.length > 0" class="analysis-history">
+              <el-divider>分析历史</el-divider>
+              <el-timeline>
+                <el-timeline-item
+                  v-for="history in analysisHistory"
+                  :key="history.id"
+                  :timestamp="formatDate(history.created_at)"
+                  placement="top"
+                >
+                  <div class="history-item">
+                    <div class="history-action">{{ history.action }}</div>
+                    <div class="history-meta">
+                      <el-tag v-if="history.analysis_model" size="small" type="info">
+                        {{ history.analysis_model }}
+                      </el-tag>
+                      <span
+                        v-if="hasHistoryPriceRange(history)"
+                        class="history-price-range"
+                      >
+                        价格区间：
+                        <span class="price">¥{{ formatNumber(history.predicted_price_min) }}</span>
+                        <span class="price-sep">~</span>
+                        <span class="price">¥{{ formatNumber(history.predicted_price_max) }}</span>
+                      </span>
+                    </div>
+                    <div v-if="history.note" class="history-note">{{ history.note }}</div>
+                    <div class="history-user">操作人: {{ history.created_by_name || '系统' }}</div>
+                  </div>
+                </el-timeline-item>
+              </el-timeline>
             </div>
           </div>
 
@@ -478,6 +581,270 @@ const dataSourceNote = computed(() =>
   getDataSourceNote(detailData.value?.analysis_result || null)
 )
 
+const analysisHistory = computed(() => {
+  if (!detailData.value?.analysis_history) {
+    return []
+  }
+  return detailData.value.analysis_history.map(hist => ({
+    id: hist.id,
+    action: hist.action,
+    note: hist.note,
+    created_at: hist.created_at,
+    created_by_name: hist.created_by_name || '系统',
+    analysis_model: hist.analysis_model || '',
+    predicted_price_min: hist.predicted_price_min,
+    predicted_price_max: hist.predicted_price_max
+  }))
+})
+
+const hasHistoryPriceRange = (history) => {
+  return history?.predicted_price_min !== null &&
+    history?.predicted_price_min !== undefined &&
+    history?.predicted_price_max !== null &&
+    history?.predicted_price_max !== undefined
+}
+
+// 单位转换系数表（转换为基础单位）
+// 质量单位统一转换为 kg
+// 长度单位统一转换为 m
+// 面积单位统一转换为 m²
+// 体积单位统一转换为 m³
+const unitConversionTable = {
+  // 质量单位 -> kg
+  'kg': { base: 'kg', factor: 1 },
+  'KG': { base: 'kg', factor: 1 },
+  '千克': { base: 'kg', factor: 1 },
+  'g': { base: 'kg', factor: 0.001 },
+  'G': { base: 'kg', factor: 0.001 },
+  '克': { base: 'kg', factor: 0.001 },
+  't': { base: 'kg', factor: 1000 },
+  'T': { base: 'kg', factor: 1000 },
+  '吨': { base: 'kg', factor: 1000 },
+  
+  // 长度单位 -> m
+  'm': { base: 'm', factor: 1 },
+  'M': { base: 'm', factor: 1 },
+  '米': { base: 'm', factor: 1 },
+  'cm': { base: 'm', factor: 0.01 },
+  'CM': { base: 'm', factor: 0.01 },
+  '厘米': { base: 'm', factor: 0.01 },
+  'mm': { base: 'm', factor: 0.001 },
+  'MM': { base: 'm', factor: 0.001 },
+  '毫米': { base: 'm', factor: 0.001 },
+  'km': { base: 'm', factor: 1000 },
+  'KM': { base: 'm', factor: 1000 },
+  '千米': { base: 'm', factor: 1000 },
+  '公里': { base: 'm', factor: 1000 },
+  
+  // 面积单位 -> m²
+  'm²': { base: 'm²', factor: 1 },
+  'm2': { base: 'm²', factor: 1 },
+  'M²': { base: 'm²', factor: 1 },
+  'M2': { base: 'm²', factor: 1 },
+  '平方米': { base: 'm²', factor: 1 },
+  '㎡': { base: 'm²', factor: 1 },
+  'cm²': { base: 'm²', factor: 0.0001 },
+  'cm2': { base: 'm²', factor: 0.0001 },
+  '平方厘米': { base: 'm²', factor: 0.0001 },
+  'mm²': { base: 'm²', factor: 0.000001 },
+  'mm2': { base: 'm²', factor: 0.000001 },
+  '平方毫米': { base: 'm²', factor: 0.000001 },
+  
+  // 体积单位 -> m³
+  'm³': { base: 'm³', factor: 1 },
+  'm3': { base: 'm³', factor: 1 },
+  'M³': { base: 'm³', factor: 1 },
+  'M3': { base: 'm³', factor: 1 },
+  '立方米': { base: 'm³', factor: 1 },
+  '方': { base: 'm³', factor: 1 },
+  'L': { base: 'm³', factor: 0.001 },
+  'l': { base: 'm³', factor: 0.001 },
+  '升': { base: 'm³', factor: 0.001 },
+  'mL': { base: 'm³', factor: 0.000001 },
+  'ml': { base: 'm³', factor: 0.000001 },
+  '毫升': { base: 'm³', factor: 0.000001 },
+  
+  // 其他单位（无需转换）
+  '个': { base: '个', factor: 1 },
+  '只': { base: '个', factor: 1 },
+  '件': { base: '个', factor: 1 },
+  '套': { base: '套', factor: 1 },
+  '组': { base: '组', factor: 1 },
+  '台': { base: '台', factor: 1 },
+  '根': { base: '根', factor: 1 },
+  '张': { base: '张', factor: 1 },
+  '块': { base: '块', factor: 1 },
+  '片': { base: '片', factor: 1 },
+  '卷': { base: '卷', factor: 1 },
+  '桶': { base: '桶', factor: 1 },
+  '袋': { base: '袋', factor: 1 },
+  '箱': { base: '箱', factor: 1 },
+  '盒': { base: '盒', factor: 1 }
+}
+
+// 获取单位转换信息
+const getUnitInfo = (unit) => {
+  if (!unit) return null
+  const trimmedUnit = unit.trim()
+  return unitConversionTable[trimmedUnit] || null
+}
+
+// 计算两个单位之间的转换系数
+// 返回：将 fromUnit 的价格转换为 toUnit 的价格所需的系数
+// 例如：fromUnit='t', toUnit='kg' => 返回 0.001（因为 1元/t = 0.001元/kg）
+const getUnitConversionFactor = (fromUnit, toUnit) => {
+  const fromInfo = getUnitInfo(fromUnit)
+  const toInfo = getUnitInfo(toUnit)
+  
+  // 如果任一单位无法识别，返回 1（不转换）
+  if (!fromInfo || !toInfo) return 1
+  
+  // 如果基础单位不同，无法转换，返回 1
+  if (fromInfo.base !== toInfo.base) return 1
+  
+  // 转换系数 = fromFactor / toFactor
+  // 例如：t(1000) -> kg(1)，系数 = 1000/1 = 1000
+  // 意味着 1t = 1000kg，所以 1元/t = 1/1000 元/kg = 0.001元/kg
+  // 价格转换需要除以这个比率
+  return fromInfo.factor / toInfo.factor
+}
+
+// 单位转换信息（用于显示）
+const unitConversionInfo = computed(() => {
+  const projectUnit = detailData.value?.project_material?.unit
+  const baseUnit = detailData.value?.matched_base_material?.unit
+  
+  if (!projectUnit || !baseUnit) return null
+  
+  const factor = getUnitConversionFactor(baseUnit, projectUnit)
+  
+  if (factor === 1 && projectUnit !== baseUnit) {
+    // 单位不同但无法转换
+    return {
+      needsConversion: false,
+      canConvert: false,
+      projectUnit,
+      baseUnit,
+      factor: 1,
+      message: `单位不兼容（${projectUnit} vs ${baseUnit}）`
+    }
+  }
+  
+  if (factor !== 1) {
+    return {
+      needsConversion: true,
+      canConvert: true,
+      projectUnit,
+      baseUnit,
+      factor,
+      message: `已将 ${baseUnit} 转换为 ${projectUnit}（系数: ${factor}）`
+    }
+  }
+  
+  return {
+    needsConversion: false,
+    canConvert: true,
+    projectUnit,
+    baseUnit,
+    factor: 1,
+    message: null
+  }
+})
+
+// 转换后的基期信息价（按项目材料单位计算）
+const convertedBasePrice = computed(() => {
+  const basePrice = detailData.value?.matched_base_material?.price
+  if (basePrice === null || basePrice === undefined) return null
+  
+  const conversionFactor = unitConversionInfo.value?.factor || 1
+  // 价格转换：原价格 / 转换系数
+  // 例如：4684元/t，转换系数1000，结果 = 4684/1000 = 4.684元/kg
+  return basePrice / conversionFactor
+})
+
+// 转换后的合同期平均价（按项目材料单位计算）
+const convertedContractAvgPrice = computed(() => {
+  const contractAvgPrice = detailData.value?.analysis_result?.contract_average_price
+  if (contractAvgPrice === null || contractAvgPrice === undefined) return null
+  
+  const conversionFactor = unitConversionInfo.value?.factor || 1
+  // 如果合同期平均价是基于市场信息价单位计算的，需要转换
+  // 但通常合同期平均价应该已经是按项目材料单位的
+  // 这里需要判断合同期平均价的单位来源
+  
+  // 检查合同期平均价是否接近项目材料单价（说明已按项目单位计算）
+  const projectPrice = detailData.value?.project_material?.unit_price
+  if (projectPrice && Math.abs(contractAvgPrice - projectPrice) / projectPrice < 0.5) {
+    // 合同期平均价接近项目单价，说明已经是项目单位，无需转换
+    return contractAvgPrice
+  }
+  
+  // 检查合同期平均价是否接近基期信息价（说明是市场单位）
+  const basePrice = detailData.value?.matched_base_material?.price
+  if (basePrice && conversionFactor !== 1 && Math.abs(contractAvgPrice - basePrice) / basePrice < 0.5) {
+    // 合同期平均价接近基期信息价，需要转换
+    return contractAvgPrice / conversionFactor
+  }
+  
+  // 默认假设合同期平均价已经是项目单位
+  return contractAvgPrice
+})
+
+// 价格差异：项目材料单价 - 转换后的基期信息价
+const priceDifference = computed(() => {
+  const projectPrice = detailData.value?.project_material?.unit_price
+  const basePrice = convertedBasePrice.value
+  if (projectPrice === null || projectPrice === undefined || basePrice === null || basePrice === undefined) {
+    return null
+  }
+  return projectPrice - basePrice
+})
+
+// 风险幅度：(合同期平均价 - 转换后的基期信息价) / 转换后的基期信息价
+const riskRate = computed(() => {
+  const contractAvgPrice = convertedContractAvgPrice.value
+  const basePrice = convertedBasePrice.value
+  if (contractAvgPrice === null || contractAvgPrice === undefined || basePrice === null || basePrice === undefined || basePrice === 0) {
+    return null
+  }
+  return (contractAvgPrice - basePrice) / basePrice
+})
+
+// 调差：风险幅度在±5%以内则为0，超过部分乘以数量
+const priceAdjustment = computed(() => {
+  const contractAvgPrice = convertedContractAvgPrice.value
+  const basePrice = convertedBasePrice.value
+  const quantity = detailData.value?.analysis_result?.quantity ?? detailData.value?.project_material?.quantity
+  
+  if (contractAvgPrice === null || contractAvgPrice === undefined || 
+      basePrice === null || basePrice === undefined || basePrice === 0) {
+    return null
+  }
+  if (quantity === null || quantity === undefined) {
+    return null
+  }
+  
+  const currentRiskRate = (contractAvgPrice - basePrice) / basePrice
+  const threshold = 0.05 // ±5%
+  
+  // 如果风险幅度在±5%以内，调差为0
+  if (currentRiskRate >= -threshold && currentRiskRate <= threshold) {
+    return 0
+  }
+  
+  // 超过±5%的部分计算调差
+  let excessPerUnit = 0
+  if (currentRiskRate > threshold) {
+    // 价格偏高，超出上限的部分
+    excessPerUnit = contractAvgPrice - basePrice * (1 + threshold)
+  } else {
+    // 价格偏低，超出下限的部分（负值）
+    excessPerUnit = contractAvgPrice - basePrice * (1 - threshold)
+  }
+  
+  return excessPerUnit * quantity
+})
+
 // 监听modelValue属性变化
 watch(() => props.modelValue, (newVal) => {
   dialogVisible.value = newVal
@@ -502,6 +869,26 @@ const loadMaterialDetail = async () => {
     const response = await getMaterialAnalysisDetail(props.materialId)
     if (response.code === 200) {
       detailData.value = response.data
+      // 调试：检查数据源是否包含价格区间
+      if (detailData.value?.analysis_result?.data_sources) {
+        console.log('数据源信息:', detailData.value.analysis_result.data_sources)
+        detailData.value.analysis_result.data_sources.forEach((source, idx) => {
+          console.log(`数据源 ${idx + 1}:`, {
+            source_type: source.source_type,
+            has_price_range_min: 'price_range_min' in source,
+            price_range_min: source.price_range_min,
+            has_price_range_max: 'price_range_max' in source,
+            price_range_max: source.price_range_max,
+            all_keys: Object.keys(source)
+          })
+        })
+      }
+      // 调试：检查分析历史
+      if (detailData.value?.analysis_history) {
+        console.log('分析历史:', detailData.value.analysis_history)
+      } else {
+        console.log('没有分析历史数据')
+      }
     } else {
       error.value = response.message || '获取材料详情失败'
     }
@@ -534,23 +921,21 @@ const goToMaterialDetail = () => {
 }
 
 // 格式化数字
-const formatNumber = (value) => {
+const formatNumber = (value, decimals = 2) => {
   if (value === null || value === undefined) return '无'
-  return new Intl.NumberFormat('zh-CN', { 
-    minimumFractionDigits: 2, 
-    maximumFractionDigits: 2 
-  }).format(value)
+  // 使用 toLocaleString 但不使用分组分隔符
+  return Number(value).toLocaleString('zh-CN', { 
+    minimumFractionDigits: decimals, 
+    maximumFractionDigits: decimals,
+    useGrouping: true // 数量可以保留逗号分隔
+  })
 }
 
-const formatCurrency = (value, showSign = false) => {
+const formatCurrency = (value, showSign = false, decimals = 4) => {
   if (value === null || value === undefined) return '无'
-  const formatter = new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'CNY',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
-  const formatted = formatter.format(Math.abs(value))
+  // 使用 toFixed 避免逗号分隔符
+  const absValue = Math.abs(value).toFixed(decimals)
+  const formatted = `¥${absValue}`
   if (showSign) {
     if (value > 0) return `+${formatted}`
     if (value < 0) return `-${formatted}`
@@ -559,10 +944,14 @@ const formatCurrency = (value, showSign = false) => {
 }
 
 // 格式化百分比
-const formatPercentage = (value, showSign = false) => {
+const formatPercentage = (value, showSign = false, decimals = 2) => {
   if (value === null || value === undefined) return '无'
-  const formatted = (value * 100).toFixed(2) + '%'
-  return showSign && value > 0 ? '+' + formatted : formatted
+  const formatted = (value * 100).toFixed(decimals) + '%'
+  if (showSign) {
+    if (value > 0) return '+' + formatted
+    if (value < 0) return formatted // 负数已经有负号
+  }
+  return formatted
 }
 
 // 格式化日期
@@ -825,6 +1214,8 @@ const getSearchUrls = (analysisResult) => {
 
       .data-source-table {
         margin-bottom: 8px;
+        width: 100%;
+        overflow-x: auto;
 
         .el-table__header th {
           background: #f5f7fa;
@@ -845,6 +1236,12 @@ const getSearchUrls = (analysisResult) => {
             font-size: 12px;
             color: #a6a6a6;
           }
+        }
+
+        .price-range-cell {
+          color: #e6a23c;
+          font-weight: 500;
+          font-size: 13px;
         }
       }
 
@@ -895,6 +1292,10 @@ const getSearchUrls = (analysisResult) => {
         }
       }
 
+      .unit-conversion-alert {
+        margin-bottom: 16px;
+      }
+
       .prediction-item,
       .assessment-item {
         margin-bottom: 12px;
@@ -919,6 +1320,18 @@ const getSearchUrls = (analysisResult) => {
 
           &.negative {
             color: #67c23a;
+          }
+
+          .unit-hint {
+            font-size: 12px;
+            font-weight: normal;
+            color: #909399;
+          }
+
+          .quantity-hint {
+            font-size: 12px;
+            font-weight: normal;
+            color: #909399;
           }
         }
       }
@@ -947,6 +1360,29 @@ const getSearchUrls = (analysisResult) => {
 
           .meta-value {
             color: #333;
+          }
+        }
+      }
+
+      .analysis-history {
+        margin-top: 20px;
+
+        .history-item {
+          .history-action {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 4px;
+          }
+
+          .history-note {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 4px;
+          }
+
+          .history-user {
+            font-size: 12px;
+            color: #999;
           }
         }
       }

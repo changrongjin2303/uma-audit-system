@@ -24,6 +24,7 @@
           label="序号"
           width="80"
           align="center"
+          fixed="left"
         />
         
         <el-table-column
@@ -32,6 +33,7 @@
           min-width="180"
           show-overflow-tooltip
           align="center"
+          fixed="left"
         />
         
         <el-table-column
@@ -40,6 +42,7 @@
           min-width="150"
           show-overflow-tooltip
           align="center"
+          fixed="left"
         />
         
         <el-table-column
@@ -82,29 +85,66 @@
           align="center"
         >
           <el-table-column
-            prop="aiUnitPrice"
-            label="单价"
-            width="120"
+            label="基期信息价"
+            width="140"
             align="center"
-            :formatter="formatCurrency"
-          />
+          >
+            <template #default="{ row }">
+              {{ formatCurrency(null, null, row.originalBasePrice) }}
+              <span class="unit-text">/{{ row.unit }}</span>
+            </template>
+          </el-table-column>
+
           <el-table-column
-            prop="aiTotalPrice"
-            label="合价"
+            label="价格差异"
             width="120"
             align="center"
-            :formatter="formatCurrency"
-          />
+          >
+            <template #default="{ row }">
+              <span :class="getDifferenceClass(calculatePriceDiff(row))">
+                {{ formatCurrency(null, null, calculatePriceDiff(row)) }}
+              </span>
+            </template>
+          </el-table-column>
+
+          <el-table-column
+            label="合同期平均价"
+            width="140"
+            align="center"
+          >
+            <template #default="{ row }">
+              {{ formatCurrency(null, null, getGuidancePrice(row)) }}
+              <span class="unit-text">/{{ row.unit }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column
+            label="风险幅度"
+            width="100"
+            align="center"
+          >
+            <template #default="{ row }">
+              <span :class="getDifferenceClass(calculatePriceDiff(row))">
+                {{ formatPercent(null, null, calculateRiskRate(row)) }}
+              </span>
+            </template>
+          </el-table-column>
         </el-table-column>
         
         <el-table-column
           prop="adjustment"
-          label="核增（减）额"
+          label="调差"
           width="120"
           align="center"
           :formatter="formatAdjustment"
           :class-name="getAdjustmentClass"
-        />
+        >
+          <template #default="{ row }">
+             <span :class="getDifferenceClass(calculatePriceDiff(row))">
+               {{ formatCurrency(null, null, calculateAdjustmentDiff(row)) }}
+             </span>
+          </template>
+        </el-table-column>
         
         <el-table-column
           prop="weightPercentage"
@@ -118,7 +158,7 @@
 
     <!-- 表格备注 -->
     <div class="table-notes">
-      <p>备注：（1）本表可扩展；（2）差额为正值即核减，负值即核增；（3）本表可纳入审价过程资料一并归档。</p>
+      <p>备注：（1）本表可扩展；（2）调差为正值即核减，负值即核增；（3）本表可纳入审价过程资料一并归档。</p>
     </div>
 
     <!-- 统计汇总 -->
@@ -144,7 +184,7 @@
         </el-col>
         <el-col :span="6">
           <div class="summary-item">
-            <div class="summary-label">核减总额</div>
+            <div class="summary-label">调差总额</div>
             <div class="summary-value" :class="getAdjustmentSummaryClass()">
               {{ formatCurrency(statistics.totalAdjustment) }}
             </div>
@@ -176,8 +216,15 @@ const tableData = ref([])
 const statistics = computed(() => {
   const totalMaterials = tableData.value.length
   const originalTotal = tableData.value.reduce((sum, item) => sum + (item.originalTotalPrice || 0), 0)
-  const aiTotal = tableData.value.reduce((sum, item) => sum + (item.aiTotalPrice || 0), 0)
-  const totalAdjustment = originalTotal - aiTotal
+  
+  // 重新计算总调差
+  const totalAdjustment = tableData.value.reduce((sum, item) => {
+    return sum + (calculateAdjustmentDiff(item) || 0)
+  }, 0)
+
+  // AI审核总额 = 送审总额 - 调差总额
+  // 注意：调差为正值即核减，所以 Audited = Original - Adjustment
+  const aiTotal = originalTotal - totalAdjustment
   
   return {
     totalMaterials,
@@ -187,46 +234,134 @@ const statistics = computed(() => {
   }
 })
 
+// 格式化数字，去除末尾的0，不使用千分位逗号
+const formatDecimal = (num, decimals = 4) => {
+  if (num === null || num === undefined || (typeof num === 'number' && isNaN(num))) return '-'
+  const val = Number(num)
+  const res = val.toFixed(decimals)
+  if (res.includes('.')) {
+    return res.replace(/\.?0+$/, '')
+  }
+  return res
+}
+
 // 格式化数字
 const formatNumber = (row, column, cellValue) => {
   if (!cellValue && cellValue !== 0) return '-'
-  return Number(cellValue).toLocaleString()
+  return formatDecimal(cellValue)
 }
 
 // 格式化货币
 const formatCurrency = (row, column, cellValue) => {
   const value = column === undefined && cellValue === undefined ? row : cellValue
-  if (value === null || value === undefined || (typeof value === 'number' && isNaN(value))) return '-'
-  return Number(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+  return formatDecimal(value)
 }
 
 // 直接格式化货币值
 const formatCurrencyValue = (value) => {
-  if (!value && value !== 0) return '-'
-  return Number(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+  return formatDecimal(value)
 }
 
 // 格式化调整金额
 const formatAdjustment = (row, column, cellValue) => {
   if (!cellValue && cellValue !== 0) return '-'
   const value = Number(cellValue)
-  const formatted = Math.abs(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+  const formatted = formatDecimal(Math.abs(value))
   return value > 0 ? `+${formatted}` : `-${formatted}`
 }
 
 // 格式化百分比
 const formatPercent = (row, column, cellValue) => {
   if (!cellValue && cellValue !== 0) return '-'
-  return `${Number(cellValue).toFixed(2)}%`
+  return `${formatDecimal(cellValue, 2)}%`
+}
+
+// 获取基准单价（合同期平均价）
+const getGuidancePrice = (row) => {
+  return row.aiUnitPrice
+}
+
+// 获取原始单价
+const getOriginalPrice = (row) => {
+  return row.originalUnitPrice
+}
+
+// 计算价格差异：直接使用后端返回的差价
+const calculatePriceDiff = (row) => {
+  if (row.priceDiff !== undefined && row.priceDiff !== null) {
+    return row.priceDiff
+  }
+  const guidance = getGuidancePrice(row) || 0
+  const original = getOriginalPrice(row) || 0
+  return original - guidance
+}
+
+// 计算风险幅度：直接使用后端返回的风险幅度
+const calculateRiskRate = (row) => {
+  if (row.riskRate !== undefined && row.riskRate !== null) {
+    return row.riskRate
+  }
+  const diff = calculatePriceDiff(row)
+  const original = getOriginalPrice(row)
+  if (!original) return 0
+  return (diff / original) * 100
+}
+
+// 计算调差：根据风险幅度计算，±5%以内不调差
+const calculateAdjustmentDiff = (row) => {
+  // 获取合同期平均价
+  const contractAvgPrice = row.aiUnitPrice || 0
+  
+  // 获取风险幅度（百分比）
+  let riskRate = 0
+  if (row.riskRate !== undefined && row.riskRate !== null) {
+    riskRate = row.riskRate
+  } else {
+    // 如果没有风险幅度，尝试计算
+    const diff = calculatePriceDiff(row)
+    const original = getOriginalPrice(row)
+    if (!original) return 0
+    // 假设 original 是基期价格，diff 是 original - contractAvg
+    // riskRate = (contractAvg - original) / original * 100
+    // contractAvg = original - diff
+    // riskRate = (original - diff - original) / original * 100 = -diff / original * 100
+    riskRate = -(diff / original) * 100
+  }
+
+  // 5% 阈值逻辑
+  const thresholdPercent = 5
+  const thresholdDecimal = 0.05
+  
+  // 如果风险幅度在 ±5% 以内，调差为 0
+  if (Math.abs(riskRate) <= thresholdPercent) {
+    return 0
+  }
+  
+  // 反推基期信息价
+  // riskRate (decimal) = (contractAvg - base) / base
+  // base = contractAvg / (1 + riskRate)
+  const riskRateDecimal = riskRate / 100
+  if (1 + riskRateDecimal === 0) return 0 // 避免除以0
+  
+  const basePrice = contractAvgPrice / (1 + riskRateDecimal)
+  
+  let excessPerUnit = 0
+  if (riskRate > thresholdPercent) {
+    // 涨幅超过5%：合同期平均价 - 基期信息价 * (1 + 5%)
+    excessPerUnit = contractAvgPrice - basePrice * (1 + thresholdDecimal)
+  } else {
+    // 跌幅超过5%：合同期平均价 - 基期信息价 * (1 - 5%)
+    excessPerUnit = contractAvgPrice - basePrice * (1 - thresholdDecimal)
+  }
+  
+  const quantity = row.quantity || 0
+  return excessPerUnit * quantity
+}
+
+// 获取差异样式类
+const getDifferenceClass = (value) => {
+  if (!value) return ''
+  return value > 0 ? 'diff-positive' : 'diff-negative'
 }
 
 // 获取调整金额样式类
@@ -264,12 +399,20 @@ const getSummaries = (param) => {
       case 'originalTotalPrice':
       case 'aiTotalPrice':
       case 'adjustment':
-        const sum = values.reduce((sum, val) => sum + (val || 0), 0)
-        sums[index] = formatCurrencyValue(sum)
+        const totalAdjustment = data.reduce((sum, item) => {
+           // 这里需要重新计算调差总和，因为adjustment字段可能不是基于5%阈值计算的
+           // 但为了性能，我们应该在processGuidancePriceData中计算好
+           // 由于calculateAdjustmentDiff依赖组件方法，这里简单处理：
+           // 实际上最好的方式是在processGuidancePriceData中把calculateAdjustmentDiff的逻辑放进去
+           // 这里先临时调用方法计算
+           const adj = calculateAdjustmentDiff(item)
+           return sum + (adj || 0)
+        }, 0)
+        sums[index] = formatCurrencyValue(totalAdjustment)
         break
       case 'weightPercentage':
         const totalWeight = values.reduce((sum, val) => sum + (val || 0), 0)
-        sums[index] = `${totalWeight.toFixed(2)}%`
+        sums[index] = `${formatDecimal(totalWeight, 2)}%`
         break
       default:
         sums[index] = ''
@@ -362,8 +505,12 @@ const processGuidancePriceData = (data) => {
     originalTotalPrice: Number(item.original_total_price) || (Number(item.original_price) || 0) * (Number(item.quantity) || 0),
     aiUnitPrice: Number(item.guidance_price || item.base_price) || 0,
     aiTotalPrice: Number(item.guidance_total_price) || (Number(item.guidance_price || item.base_price) || 0) * (Number(item.quantity) || 0),
+    originalBasePrice: Number(item.original_base_price) || 0,
+    baseUnit: item.base_unit || '',
     adjustment: Number(item.adjustment) || ((Number(item.original_price) || 0) - (Number(item.guidance_price || item.base_price) || 0)) * (Number(item.quantity) || 0),
-    weightPercentage: Number(item.weight_percentage) || 0
+    weightPercentage: Number(item.weight_percentage) || 0,
+    priceDiff: item.price_diff !== undefined ? Number(item.price_diff) : undefined,
+    riskRate: item.risk_rate !== undefined ? Number(item.risk_rate) : undefined
   }))
 
   const diffFiltered = mapped.filter(item => Math.abs(item.adjustment || 0) > 1e-6)
@@ -419,6 +566,22 @@ watch(() => props.guidancePriceData, (newData) => {
       font-weight: 500;
     }
   }
+}
+
+.diff-positive {
+  color: #F56C6C; /* Red */
+  font-weight: bold;
+}
+
+.diff-negative {
+  color: #67C23A; /* Green */
+  font-weight: bold;
+}
+
+.unit-text {
+  color: #909399;
+  font-size: 12px;
+  margin-left: 2px;
 }
 
 .table-container {

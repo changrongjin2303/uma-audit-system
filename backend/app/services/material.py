@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any, Tuple, Set
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_, text, delete
+from sqlalchemy import select, func, and_, or_, text, delete, update
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
 import pandas as pd
@@ -9,7 +9,7 @@ from loguru import logger
 from app.models.material import BaseMaterial, MaterialAlias
 from app.schemas.material import (
     BaseMaterialCreate, BaseMaterialUpdate, BaseMaterialSearchRequest,
-    BaseMaterialImportRequest, MaterialAliasCreate
+    BaseMaterialImportRequest, MaterialAliasCreate, BaseMaterialPeriodDeleteRequest
 )
 from app.utils.excel import ExcelProcessor
 
@@ -92,6 +92,14 @@ class BaseMaterialService:
                             BaseMaterial.province == search_params.region
                         )
                     )
+            
+            # 省份过滤（精确匹配）
+            if hasattr(search_params, 'province') and search_params.province:
+                conditions.append(BaseMaterial.province == search_params.province)
+            
+            # 城市过滤（精确匹配）
+            if hasattr(search_params, 'city') and search_params.city:
+                conditions.append(BaseMaterial.city == search_params.city)
             
             # 价格范围过滤
             if search_params.price_min is not None:
@@ -176,6 +184,14 @@ class BaseMaterialService:
                             BaseMaterial.province == search_params.region
                         )
                     )
+            
+            # 省份过滤（精确匹配）
+            if hasattr(search_params, 'province') and search_params.province:
+                conditions.append(BaseMaterial.province == search_params.province)
+            
+            # 城市过滤（精确匹配）
+            if hasattr(search_params, 'city') and search_params.city:
+                conditions.append(BaseMaterial.city == search_params.city)
             
             if search_params.price_min is not None:
                 conditions.append(BaseMaterial.price >= search_params.price_min)
@@ -301,52 +317,129 @@ class BaseMaterialService:
         db: AsyncSession,
         material_ids: List[int]
     ) -> int:
-        """批量删除材料"""
+        """批量删除材料 - 优化大批量删除性能"""
         try:
-            # 获取要删除的材料
-            stmt = select(BaseMaterial).where(BaseMaterial.id.in_(material_ids))
-            result = await db.execute(stmt)
-            materials = result.scalars().all()
+            if not material_ids:
+                return 0
+
+            total_ids = len(material_ids)
+            logger.info(f"开始批量删除 {total_ids} 个基准材料")
             
-            deleted_count = 0
+            # 大批量删除时分批处理，避免SQL语句过长和超时
+            BATCH_SIZE = 500  # 每批删除500条
+            total_deleted = 0
             
-            for material in materials:
-                # 检查是否被项目材料引用
+            for i in range(0, total_ids, BATCH_SIZE):
+                batch_ids = material_ids[i:i + BATCH_SIZE]
+                current_batch = i // BATCH_SIZE + 1
+                total_batches = (total_ids + BATCH_SIZE - 1) // BATCH_SIZE
+                
+                logger.info(f"处理第 {current_batch}/{total_batches} 批，数量: {len(batch_ids)}")
+                
+                # 1. 批量解除项目材料关联
                 from app.models.project import ProjectMaterial
-                stmt_ref = select(ProjectMaterial).where(ProjectMaterial.matched_material_id == material.id)
-                ref_result = await db.execute(stmt_ref)
-                referenced_materials = ref_result.scalars().all()
+                stmt_unlink = (
+                    update(ProjectMaterial)
+                    .where(ProjectMaterial.matched_material_id.in_(batch_ids))
+                    .values(
+                        matched_material_id=None,
+                        is_matched=False,
+                        match_score=0.0
+                    )
+                )
+                await db.execute(stmt_unlink)
                 
-                if referenced_materials:
-                    # 解除项目材料关联
-                    logger.warning(f"基准材料ID {material.id} 被 {len(referenced_materials)} 个项目材料引用，正在解除关联")
-                    for proj_material in referenced_materials:
-                        proj_material.matched_material_id = None
-                        proj_material.is_matched = False
-                        proj_material.match_score = 0.0
-                
-                # 删除材料别名
+                # 2. 批量删除关联的别名
                 from app.models.material import MaterialAlias
-                stmt_alias = select(MaterialAlias).where(MaterialAlias.base_material_id == material.id)
-                alias_result = await db.execute(stmt_alias)
-                aliases = alias_result.scalars().all()
+                stmt_delete_alias = delete(MaterialAlias).where(MaterialAlias.base_material_id.in_(batch_ids))
+                await db.execute(stmt_delete_alias)
                 
-                for alias in aliases:
-                    await db.delete(alias)
+                # 3. 批量删除基准材料
+                stmt_delete_material = delete(BaseMaterial).where(BaseMaterial.id.in_(batch_ids))
+                result = await db.execute(stmt_delete_material)
+                batch_deleted = result.rowcount
+                total_deleted += batch_deleted
                 
-                # 删除基准材料
-                await db.delete(material)
-                deleted_count += 1
+                # 每批提交一次事务
+                await db.commit()
+                logger.info(f"第 {current_batch} 批删除完成，本批删除: {batch_deleted}，累计删除: {total_deleted}")
             
-            # 统一提交事务
-            await db.commit()
-            logger.info(f"成功批量删除 {deleted_count} 个基准材料")
-            return deleted_count
+            logger.info(f"批量删除完成，共删除 {total_deleted} 个基准材料")
+            return total_deleted
         
         except Exception as e:
             logger.error(f"批量删除材料失败: {e}")
             await db.rollback()
-            return 0
+            raise e
+
+    @staticmethod
+    async def delete_materials_by_period(
+        db: AsyncSession,
+        delete_params: BaseMaterialPeriodDeleteRequest
+    ) -> Dict[str, int]:
+        """根据期数及地区信息批量删除材料"""
+        if not delete_params:
+            raise ValueError("缺少删除条件")
+
+        cleaned_price_date = delete_params.price_date
+        cleaned_price_type = delete_params.price_type
+
+        def _clean_value(value: Optional[str]) -> Optional[str]:
+            if value is None:
+                return None
+            value_str = str(value).strip()
+            if not value_str or value_str.lower() in {"none", "null"}:
+                return None
+            return value_str.split(":")[0]
+
+        cleaned_region = _clean_value(delete_params.region)
+        cleaned_province = _clean_value(delete_params.province)
+        cleaned_city = _clean_value(delete_params.city)
+
+        conditions = []
+
+        if cleaned_price_date:
+            conditions.append(BaseMaterial.price_date == cleaned_price_date)
+        else:
+            conditions.append(
+                or_(
+                    BaseMaterial.price_date.is_(None),
+                    BaseMaterial.price_date == "",
+                    BaseMaterial.price_date == "None"
+                )
+            )
+
+        if cleaned_price_type:
+            conditions.append(BaseMaterial.price_type == cleaned_price_type)
+
+        if cleaned_price_type == "provincial":
+            # 省刊优先使用province字段
+            province_match = cleaned_province or cleaned_region
+            if province_match:
+                conditions.append(BaseMaterial.province == province_match)
+        else:
+            if cleaned_region:
+                conditions.append(BaseMaterial.region == cleaned_region)
+            if cleaned_city:
+                conditions.append(BaseMaterial.city == cleaned_city)
+            if cleaned_province:
+                conditions.append(BaseMaterial.province == cleaned_province)
+
+        if not conditions:
+            raise ValueError("删除期数数据时至少需要提供一个筛选条件")
+
+        stmt = select(BaseMaterial.id).where(and_(*conditions))
+        result = await db.execute(stmt)
+        material_ids = [row[0] for row in result.all()]
+
+        if not material_ids:
+            return {"matched_count": 0, "deleted_count": 0}
+
+        deleted_count = await BaseMaterialService.batch_delete_materials(db, material_ids)
+        return {
+            "matched_count": len(material_ids),
+            "deleted_count": deleted_count
+        }
     
     @staticmethod
     async def get_categories(db: AsyncSession) -> List[str]:
@@ -398,6 +491,49 @@ class BaseMaterialService:
         regions = result.scalars().all()
         return [region for region in regions if region and region.strip()]
     
+    @staticmethod
+    async def get_material_periods(
+        db: AsyncSession,
+    ) -> List[Dict[str, Any]]:
+        """获取材料期数列表（按期数、类型、地区分组）"""
+        stmt = select(
+            BaseMaterial.price_date,
+            BaseMaterial.price_type,
+            BaseMaterial.region,
+            BaseMaterial.province,
+            BaseMaterial.city,
+            func.count(BaseMaterial.id).label('count')
+        ).where(
+             and_(
+                BaseMaterial.price_date.is_not(None),
+                BaseMaterial.price_date != ""
+            )
+        ).group_by(
+            BaseMaterial.price_date,
+            BaseMaterial.price_type,
+            BaseMaterial.region,
+            BaseMaterial.province,
+            BaseMaterial.city
+        ).order_by(
+            BaseMaterial.price_date.desc(),
+            BaseMaterial.region
+        )
+
+        result = await db.execute(stmt)
+        
+        periods = []
+        for row in result:
+             # 确保所有字段都是纯字符串或None
+             periods.append({
+                 "price_date": str(row.price_date) if row.price_date else None,
+                 "price_type": str(row.price_type) if row.price_type else None,
+                 "region": str(row.region) if row.region else None,
+                 "province": str(row.province) if row.province else None,
+                 "city": str(row.city) if row.city else None,
+                 "count": int(row.count) if row.count else 0
+             })
+        return periods
+
     @staticmethod
     async def search_similar_materials(
         db: AsyncSession,

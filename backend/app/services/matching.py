@@ -363,7 +363,6 @@ class MaterialMatchingService:
         """预过滤候选材料"""
         
         material_name = project_material.get('material_name', '').lower()
-        material_unit = project_material.get('unit', '').lower()
         
         if not material_name:
             return base_materials[:max_candidates]
@@ -373,14 +372,6 @@ class MaterialMatchingService:
         
         for base_material in base_materials:
             base_name = base_material.get('name', '').lower()
-            base_unit = base_material.get('unit', '').lower()
-            
-            # 单位必须匹配或可转换
-            if material_unit and base_unit:
-                std_unit1 = self.matcher._standardize_unit(material_unit)
-                std_unit2 = self.matcher._standardize_unit(base_unit)
-                if std_unit1 != std_unit2 and not self.matcher._are_convertible_units(std_unit1, std_unit2):
-                    continue
             
             # 名称关键词匹配
             if any(keyword in base_name for keyword in name_keywords if len(keyword) > 1):
@@ -589,13 +580,17 @@ class MaterialMatchingService:
         remaining_materials = []
 
         for material in materials:
+            # 封装项目材料字段，保持与匹配器期望的键一致
+            project_material_dict = {
+                'material_name': material.material_name or '',
+                'specification': material.specification or '',
+                'unit': material.unit or '',
+                'category': material.category or ''
+            }
+
             # 尝试匹配
             match_result = self.matcher.find_best_match(
-                {
-                    'name': material.material_name,
-                    'specification': material.specification,
-                    'unit': material.unit
-                },
+                project_material_dict,
                 base_materials
             )
 

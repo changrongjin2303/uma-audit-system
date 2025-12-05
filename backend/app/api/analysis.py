@@ -84,7 +84,7 @@ async def analyze_project_materials(
 
 class AnalyzePricedMaterialsRequest(BaseModel):
     """分析市场信息价材料请求模型"""
-    material_ids: List[int] = Field(..., description="要分析的材料ID列表")
+    material_ids: Optional[List[int]] = Field(None, description="要分析的材料ID列表，为空则分析所有材料")
     batch_size: int = Field(10, ge=1, le=100, description="批量处理大小")
 
 
@@ -184,6 +184,7 @@ async def get_analysis_results(
     status: Optional[str] = Query(None, description="分析状态筛选"),
     is_reasonable: Optional[bool] = Query(None, description="价格合理性筛选"),
     risk_level: Optional[str] = Query(None, description="风险等级筛选"),
+    material_name: Optional[str] = Query(None, description="材料名称筛选"),
     skip: int = Query(0, ge=0, description="跳过的记录数"),
     limit: int = Query(100, ge=1, le=1000, description="返回的记录数"),
     # 开发环境暂时移除认证要求
@@ -219,6 +220,7 @@ async def get_analysis_results(
             status=analysis_status,
             is_reasonable=is_reasonable,
             risk_level=risk_level,
+            material_name=material_name,
             skip=skip,
             limit=limit
         )
@@ -272,6 +274,9 @@ async def get_analysis_statistics(
 @router.get("/{project_id}/priced-materials-analysis")
 async def get_priced_materials_analysis(
     project_id: int,
+    status: Optional[str] = Query(None, description="分析状态筛选"),
+    risk_level: Optional[str] = Query(None, description="风险等级筛选"),
+    material_name: Optional[str] = Query(None, description="材料名称筛选"),
     skip: int = Query(0, ge=0, description="跳过的记录数"),
     limit: int = Query(1000, ge=1, le=1000, description="返回的记录数"),
     # 开发环境暂时移除认证要求
@@ -288,10 +293,33 @@ async def get_priced_materials_analysis(
             detail="项目不存在"
         )
     
+    # 验证状态参数
+    analysis_status = None
+    if status:
+        try:
+            analysis_status = AnalysisStatus(status)
+        except ValueError:
+            pass  # 如果状态无效，忽略该筛选条件
+
     try:
-        from app.models.analysis import PriceAnalysis
+        from app.models.analysis import PriceAnalysis, PriceAnalysisHistory
         from app.models.project import ProjectMaterial
         from sqlalchemy import select, and_, func
+        
+        # 构建筛选条件
+        conditions = [
+            ProjectMaterial.project_id == project_id,
+            PriceAnalysis.analysis_model == "guided_price_comparison"
+        ]
+        
+        if analysis_status:
+            conditions.append(PriceAnalysis.status == analysis_status)
+            
+        if risk_level:
+            conditions.append(PriceAnalysis.risk_level == risk_level)
+
+        if material_name:
+            conditions.append(ProjectMaterial.material_name.ilike(f"%{material_name}%"))
         
         # 从数据库获取已保存的市场信息价分析结果
         stmt = select(
@@ -308,10 +336,7 @@ async def get_priced_materials_analysis(
                 ProjectMaterial, PriceAnalysis.material_id == ProjectMaterial.id
             )
         ).where(
-            and_(
-                ProjectMaterial.project_id == project_id,
-                PriceAnalysis.analysis_model == "guided_price_comparison"
-            )
+            and_(*conditions)
         ).offset(skip).limit(limit)
         
         result = await db.execute(stmt)
@@ -346,11 +371,14 @@ async def get_priced_materials_analysis(
                     "material_name": record.material_name or "",
                     "specification": record.specification or "",
                     "unit": record.unit or "",
+                    "base_unit": api_data.get('base_unit') or record.unit or "",  # 基期材料单位，用于单位转换
                     "quantity": safe_float(record.quantity, 0),
                     "project_unit_price": safe_float(api_data.get('project_unit_price'), 0),
                     "base_unit_price": safe_float(api_data.get('base_unit_price'), 0),
+                    "contract_average_price": safe_float(api_data.get('base_unit_price'), 0),  # 合同期平均价，同base_unit_price
                     "base_price_including_tax": safe_float(api_data.get('base_price_including_tax'), 0),
                     "base_price_excluding_tax": safe_float(api_data.get('base_price_excluding_tax'), 0),
+                    "original_base_price": safe_float(api_data.get('original_base_price'), 0),  # 原始基期信息价
                     "unit_price_difference": safe_float(api_data.get('unit_price_difference'), 0),
                     "total_price_difference": safe_float(api_data.get('total_price_difference'), 0),
                     "price_difference_rate": safe_float(api_data.get('price_difference_rate'), 0),
@@ -374,10 +402,7 @@ async def get_priced_materials_analysis(
                 ProjectMaterial, PriceAnalysis.material_id == ProjectMaterial.id
             )
         ).where(
-            and_(
-                ProjectMaterial.project_id == project_id,
-                PriceAnalysis.analysis_model == "guided_price_comparison"
-            )
+            and_(*conditions)
         )
         count_result = await db.execute(count_stmt)
         total = count_result.scalar() or 0
@@ -632,7 +657,7 @@ async def get_material_analysis_detail(
         from sqlalchemy.orm import selectinload
         from app.models.project import ProjectMaterial
         from app.models.material import BaseMaterial
-        from app.models.analysis import PriceAnalysis
+        from app.models.analysis import PriceAnalysis, PriceAnalysisHistory
         
         # 获取项目材料信息
         query = select(ProjectMaterial).where(ProjectMaterial.id == material_id)
@@ -645,13 +670,40 @@ async def get_material_analysis_detail(
                 detail="项目材料不存在"
             )
         
-        # 获取分析结果
+        # 获取分析结果（最新的）
         analysis = None
         analysis_query = select(PriceAnalysis).where(
             PriceAnalysis.material_id == material_id
         ).order_by(PriceAnalysis.created_at.desc())
         analysis_result = await db.execute(analysis_query)
         analysis = analysis_result.scalar_one_or_none()
+        
+        # 获取所有分析历史记录（用于分析历史时间线）
+        all_analyses = []
+        history_records = []
+        try:
+            # 优先从历史表获取（每次分析一条记录）
+            history_query = select(PriceAnalysisHistory).where(
+                PriceAnalysisHistory.material_id == material_id
+            ).order_by(PriceAnalysisHistory.created_at.desc())
+            history_result = await db.execute(history_query)
+            history_records = history_result.scalars().all()
+        except Exception as e:
+            # 历史表可能尚未创建或其他错误，记录日志后回退到主表
+            logger.warning(f"获取价格分析历史表记录失败，将回退到主表: {str(e)}")
+            history_records = []
+
+        # 兼容：如果历史表为空，则从主分析表中按时间倒序构造历史
+        if not history_records:
+            try:
+                all_analyses_query = select(PriceAnalysis).where(
+                    PriceAnalysis.material_id == material_id
+                ).order_by(PriceAnalysis.created_at.desc())
+                all_analyses_result = await db.execute(all_analyses_query)
+                all_analyses = all_analyses_result.scalars().all()
+            except Exception as e:
+                logger.warning(f"获取分析历史记录失败: {str(e)}")
+                all_analyses = []
         
         # 获取项目信息
         from app.models.project import Project
@@ -914,7 +966,7 @@ async def get_material_analysis_detail(
 
             detail_data["analysis_result"] = {
                 "id": analysis.id,
-                "status": analysis.status,
+                "status": analysis.status.value if hasattr(analysis.status, 'value') else str(analysis.status),
                 "predicted_price_min": float(analysis.predicted_price_min) if analysis.predicted_price_min else None,
                 "predicted_price_max": float(analysis.predicted_price_max) if analysis.predicted_price_max else None,
                 "predicted_price_avg": float(analysis.predicted_price_avg) if analysis.predicted_price_avg else None,
@@ -941,6 +993,118 @@ async def get_material_analysis_detail(
                 "contract_average_price": float(contract_average_price) if contract_average_price is not None else None,
                 "contract_period_prices": contract_period_prices
             }
+        
+        # 构建分析历史记录
+        analysis_history = []
+        try:
+            from app.models.analysis import AnalysisStatus
+            
+            def safe_float(value):
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+
+            # 合并当前分析和历史记录
+            source_iter = []
+            
+            # 1. 首先加入当前最新的分析记录（如果存在）
+            # 只有当历史记录为空，或者当前分析记录与最新的一条历史记录不重复时才添加
+            if analysis:
+                is_duplicate = False
+                if history_records:
+                    latest_history = history_records[0]
+                    # 检查是否重复：状态相同，且时间接近或模型一致
+                    if analysis.status == latest_history.status:
+                        # 优先比较 analyzed_at (分析完成时间)
+                        check_time = analysis.analyzed_at or analysis.updated_at or analysis.created_at
+                        if check_time and latest_history.created_at:
+                            try:
+                                time_diff = abs((check_time - latest_history.created_at).total_seconds())
+                                # 如果时间差在60秒内，认为是同一条记录
+                                if time_diff < 60:
+                                    is_duplicate = True
+                            except Exception:
+                                # 如果时间比较出错，降级比较模型和价格
+                                pass
+                        
+                        # 二次确认：如果时间比较无法确定或失败，比较关键字段
+                        if not is_duplicate:
+                            if (getattr(analysis, 'analysis_model', None) == getattr(latest_history, 'analysis_model', None) and
+                                getattr(analysis, 'predicted_price_min', None) == getattr(latest_history, 'predicted_price_min', None) and
+                                getattr(analysis, 'predicted_price_max', None) == getattr(latest_history, 'predicted_price_max', None)):
+                                is_duplicate = True
+
+                if not is_duplicate:
+                    source_iter.append(analysis)
+                
+            # 2. 然后加入历史记录
+            if history_records:
+                source_iter.extend(history_records)
+            
+            # 如果两者都为空，尝试使用 fallback
+            if not source_iter and all_analyses:
+                source_iter = all_analyses
+            
+            for idx, hist_analysis in enumerate(source_iter):
+                try:
+                    status = hist_analysis.status
+                    # 判断操作类型（status是枚举类型，需要比较枚举值）
+                    if status == AnalysisStatus.COMPLETED:
+                        action = "AI自动分析"
+                        note = f"使用模型: {getattr(hist_analysis, 'analysis_model', None) or '未知'}"
+                        if getattr(hist_analysis, 'analysis_cost', None):
+                            note += f"，分析成本: ¥{safe_float(hist_analysis.analysis_cost):.2f}"
+                        if getattr(hist_analysis, 'analysis_time', None):
+                            note += f"，耗时: {safe_float(hist_analysis.analysis_time):.2f}秒"
+                    elif status == AnalysisStatus.PROCESSING:
+                        action = "分析进行中"
+                        note = "AI正在分析中"
+                    elif status == AnalysisStatus.FAILED:
+                        action = "分析失败"
+                        note = getattr(hist_analysis, 'analysis_reasoning', None) or "AI分析过程中出现错误"
+                    else:
+                        action = "分析待处理"
+                        note = "等待AI分析"
+                    
+                    # 如果有审核记录，也添加（仅主表对象具备这些字段，历史表没有也没关系）
+                    if getattr(hist_analysis, 'is_reviewed', False) and getattr(hist_analysis, 'reviewed_at', None):
+                        analysis_history.append({
+                            "id": f"review_{hist_analysis.id}",
+                            "action": "人工审核",
+                            "note": getattr(hist_analysis, 'review_notes', None) or "专家确认分析结果准确性",
+                            "created_at": hist_analysis.reviewed_at.isoformat() if getattr(hist_analysis, 'reviewed_at', None) else None,
+                            "created_by_name": "审核人员"  # TODO: 从reviewer关系获取用户名
+                        })
+                    
+                    # 添加分析记录
+                    analyzed_time = getattr(hist_analysis, 'analyzed_at', None) or getattr(hist_analysis, 'created_at', None)
+                    if analyzed_time:
+                        history_entry = {
+                            "id": hist_analysis.id,
+                            "action": action,
+                            "note": note,
+                            "created_at": analyzed_time.isoformat(),
+                            "created_by_name": "AI系统",
+                            "analysis_model": getattr(hist_analysis, 'analysis_model', None),
+                            "predicted_price_min": safe_float(getattr(hist_analysis, 'predicted_price_min', None)),
+                            "predicted_price_max": safe_float(getattr(hist_analysis, 'predicted_price_max', None)),
+                            "analysis_cost": safe_float(getattr(hist_analysis, 'analysis_cost', None)),
+                            "analysis_time": safe_float(getattr(hist_analysis, 'analysis_time', None)),
+                            "analysis_status": status.value if hasattr(status, "value") else str(status)
+                        }
+                        analysis_history.append(history_entry)
+                except Exception as e:
+                    logger.warning(f"处理分析历史记录 {idx} 时出错: {str(e)}")
+                    continue
+            
+            # 按时间倒序排序（最新的在前）
+            analysis_history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        except Exception as e:
+            logger.error(f"构建分析历史记录失败: {str(e)}")
+            analysis_history = []
+        
+        detail_data["analysis_history"] = analysis_history
         
         return {
             "code": 200,

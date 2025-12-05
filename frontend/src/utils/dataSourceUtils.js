@@ -51,6 +51,32 @@ const formatPriceReference = (value) => {
   return `参考价 ${text}`
 }
 
+const formatPriceRange = (minPrice, maxPrice) => {
+  // 处理数字类型
+  const min = typeof minPrice === 'number' ? minPrice : parseFloat(minPrice)
+  const max = typeof maxPrice === 'number' ? maxPrice : parseFloat(maxPrice)
+  
+  // 如果两个值都无效，返回空字符串
+  if (isNaN(min) && isNaN(max)) {
+    return '—'
+  }
+  
+  // 如果只有一个值有效
+  if (isNaN(min) && !isNaN(max)) {
+    return `≤ ¥${max.toFixed(2)}`
+  }
+  if (!isNaN(min) && isNaN(max)) {
+    return `≥ ¥${min.toFixed(2)}`
+  }
+  
+  // 如果两个值都有效
+  if (min === max) {
+    return `¥${min.toFixed(2)}`
+  }
+  
+  return `¥${min.toFixed(2)} ~ ¥${max.toFixed(2)}`
+}
+
 const deduplicateSources = (sources) => {
   const seen = new Set()
   return sources.filter(source => {
@@ -140,6 +166,21 @@ const normalizeEntryObject = (entry) => {
 
   const reliabilityScore = parseReliabilityValue(reliabilityText, entry.reliability_score)
 
+  // 解析价格区间
+  const priceRangeMin = entry.price_range_min ?? entry['price_range_min'] ?? entry['价格区间最低'] ?? entry.min_price
+  const priceRangeMax = entry.price_range_max ?? entry['price_range_max'] ?? entry['价格区间最高'] ?? entry.max_price
+  const priceRange = formatPriceRange(priceRangeMin, priceRangeMax)
+
+  // 解析样本描述
+  const sampleDescription = normalizeString(
+    entry.sample_description || entry['sample_description'] || entry['样本描述'] || entry['样本说明']
+  ) || '—'
+
+  // 解析可选补充
+  const notes = normalizeString(
+    entry.notes || entry['notes'] || entry['可选补充'] || entry['备注'] || entry['补充说明']
+  ) || '—'
+
   return {
     source_type: sourceType,
     platform_examples: platformExamples,
@@ -147,7 +188,12 @@ const normalizeEntryObject = (entry) => {
     timeliness,
     reliability: reliabilityText,
     reliability_value: reliabilityScore,
-    price_reference: formatPriceReference(entry.price || entry['参考价格'])
+    price_reference: formatPriceReference(entry.price || entry['参考价格']),
+    price_range: priceRange,
+    price_range_min: typeof priceRangeMin === 'number' ? priceRangeMin : (priceRangeMin ? parseFloat(priceRangeMin) : null),
+    price_range_max: typeof priceRangeMax === 'number' ? priceRangeMax : (priceRangeMax ? parseFloat(priceRangeMax) : null),
+    sample_description: sampleDescription,
+    notes: notes
   }
 }
 

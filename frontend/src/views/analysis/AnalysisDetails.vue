@@ -150,6 +150,14 @@
             </el-button-group>
           </div>
           <div class="header-filters">
+            <el-input
+              v-model="searchKeyword"
+              placeholder="输入材料名称搜索"
+              prefix-icon="Search"
+              clearable
+              @input="handleFilterChange"
+              style="width: 200px; margin-right: 8px;"
+            />
             <el-select
               v-model="filterStatus"
               placeholder="筛选状态"
@@ -230,15 +238,16 @@
             <el-table-column prop="unit" label="单位" width="80" />
             <el-table-column prop="project_price" label="报审单价" width="120">
               <template #default="{ row }">
-                ¥{{ formatNumber(row.project_price) }}
+                <span v-if="row.project_price !== null && row.project_price !== undefined">¥{{ formatDecimal(row.project_price) }}</span>
+                <span v-else class="no-data">-</span>
               </template>
             </el-table-column>
             <el-table-column prop="predicted_price_range" label="AI分析区间" width="180">
               <template #default="{ row }">
                 <div v-if="row.predicted_price_min && row.predicted_price_max" class="price-range">
-                  <span>¥{{ formatNumber(row.predicted_price_min) }}</span>
+                  <span>¥{{ formatDecimal(row.predicted_price_min) }}</span>
                   <span class="range-separator">~</span>
-                  <span>¥{{ formatNumber(row.predicted_price_max) }}</span>
+                  <span>¥{{ formatDecimal(row.predicted_price_max) }}</span>
                 </div>
                 <span v-else class="no-data">-</span>
               </template>
@@ -387,41 +396,48 @@
             <el-table-column prop="unit" label="单位" width="80" />
             <el-table-column prop="quantity" label="数量" width="100">
               <template #default="{ row }">
-                {{ formatNumber(row.quantity) }}
+                {{ formatDecimal(row.quantity) }}
               </template>
             </el-table-column>
             <el-table-column prop="project_unit_price" label="报审单价" width="120">
               <template #default="{ row }">
-                <span class="price-value">¥{{ formatNumber(row.project_unit_price) }}</span>
+                <span class="price-value">¥{{ formatDecimal(row.project_unit_price) }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="base_unit_price" label="市场信息价单价" width="120">
+            <el-table-column label="基期信息价" width="140">
               <template #default="{ row }">
-                <span class="price-value">¥{{ formatNumber(row.base_unit_price) }}</span>
+                <span class="price-value">¥{{ formatDecimal(getConvertedOriginalBasePrice(row), 4) }}</span>
+                <span class="unit-hint">/{{ row.unit }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="unit_price_difference" label="单价差" width="100">
+            <el-table-column label="价格差异" width="120">
               <template #default="{ row }">
-                <span :class="{'price-increase': row.unit_price_difference > 0, 'price-decrease': row.unit_price_difference < 0}">
-                  {{ row.unit_price_difference > 0 ? '+' : '' }}¥{{ formatNumber(row.unit_price_difference) }}
+                <span :class="{'price-increase': getPricedPriceDifference(row) > 0, 'price-decrease': getPricedPriceDifference(row) < 0}">
+                  {{ getPricedPriceDifference(row) > 0 ? '+' : '' }}¥{{ formatDecimal(getPricedPriceDifference(row), 4) }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="total_price_difference" label="合价差" width="120">
+            <el-table-column label="合同期平均价" width="130">
               <template #default="{ row }">
-                <span :class="{'price-increase': row.total_price_difference > 0, 'price-decrease': row.total_price_difference < 0}">
-                  {{ row.total_price_difference > 0 ? '+' : '' }}¥{{ formatNumber(row.total_price_difference) }}
+                <span class="price-value">¥{{ formatDecimal(getPricedContractAvgPrice(row), 4) }}</span>
+                <span class="unit-hint">/{{ row.unit }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="风险幅度" width="100">
+              <template #default="{ row }">
+                <span :class="{'price-increase': getPricedRiskRate(row) > 0, 'price-decrease': getPricedRiskRate(row) < 0}">
+                  {{ getPricedRiskRate(row) > 0 ? '+' : '' }}{{ (getPricedRiskRate(row) * 100).toFixed(2) }}%
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="price_difference_rate" label="差异率" width="100">
+            <el-table-column label="调差" width="160">
               <template #default="{ row }">
-                <span :class="{'price-increase': row.price_difference_rate > 0, 'price-decrease': row.price_difference_rate < 0}">
-                  {{ row.price_difference_rate > 0 ? '+' : '' }}{{ (row.price_difference_rate * 100).toFixed(2) }}%
+                <span :class="{'price-increase': getPricedPriceAdjustment(row) > 0, 'price-decrease': getPricedPriceAdjustment(row) < 0}">
+                  {{ getPricedPriceAdjustment(row) > 0 ? '+' : '' }}¥{{ formatNumber(getPricedPriceAdjustment(row)) }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="difference_level" label="差异等级" width="100">
+            <el-table-column prop="difference_level" label="风险等级" width="100">
               <template #default="{ row }">
                 <el-tag :type="getDifferenceLevelType(row.difference_level)" size="small">
                   {{ getDifferenceLevelText(row.difference_level) }}
@@ -541,7 +557,7 @@
     <el-dialog
       v-model="showDetailDialog"
       :title="`${currentResult?.material_name} - 分析详情`"
-      width="1000px"
+      width="95%"
       :close-on-click-modal="false"
       destroy-on-close
     >
@@ -599,6 +615,21 @@
                     </template>
                   </el-table-column>
                   <el-table-column prop="timeliness" label="时效性" min-width="120" align="center" />
+                  <el-table-column prop="price_range" label="预测价格区间" min-width="160" align="center">
+                    <template #default="{ row }">
+                      <span class="price-range-cell">{{ row.price_range || '—' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="sample_description" label="样本描述" min-width="200" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      <span>{{ row.sample_description || '—' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="notes" label="可选补充" min-width="200" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      <span>{{ row.notes || '—' }}</span>
+                    </template>
+                  </el-table-column>
                   <el-table-column label="可靠性评级" min-width="160" align="center">
                     <template #default="{ row }">
                       <div class="reliability-cell">
@@ -638,27 +669,6 @@
           <h4>AI分析说明</h4>
           <div class="ai-explanation">
             {{ currentResult.ai_explanation }}
-          </div>
-        </div>
-
-        <!-- 搜索网址信息 -->
-        <div v-if="getSearchUrls(materialAnalysisDetail).length > 0" class="detail-section">
-          <h4>AI检索网页</h4>
-          <div class="search-urls">
-            <div
-              v-for="(url, index) in getSearchUrls(materialAnalysisDetail)"
-              :key="index"
-              class="search-url-item"
-            >
-              <el-link
-                :href="url"
-                target="_blank"
-                type="primary"
-                :icon="Link"
-              >
-                {{ url }}
-              </el-link>
-            </div>
           </div>
         </div>
 
@@ -737,11 +747,25 @@
             <el-timeline-item
               v-for="history in analysisHistory"
               :key="history.id"
-              :timestamp="formatDate(history.created_at)"
+              :timestamp="formatDateTime(history.created_at)"
               placement="top"
             >
               <div class="history-item">
                 <div class="history-action">{{ history.action }}</div>
+                <div class="history-meta">
+                  <el-tag v-if="history.analysis_model" size="small" type="info">
+                    {{ history.analysis_model }}
+                  </el-tag>
+                  <span
+                    v-if="hasHistoryPriceRange(history)"
+                    class="history-price-range"
+                  >
+                    价格区间：
+                    <span class="price">¥{{ formatNumber(history.predicted_price_min) }}</span>
+                    <span class="price-sep">~</span>
+                    <span class="price">¥{{ formatNumber(history.predicted_price_max) }}</span>
+                  </span>
+                </div>
                 <div v-if="history.note" class="history-note">{{ history.note }}</div>
                 <div class="history-user">操作人: {{ history.created_by_name }}</div>
               </div>
@@ -803,11 +827,63 @@
       v-model="showAnalysisDetailDialog"
       :material-id="selectedMaterialId"
     />
+
+    <!-- AI模型选择对话框 -->
+    <el-dialog
+      v-model="showModelSelectDialog"
+      title="选择AI分析模型"
+      width="480px"
+      :close-on-click-modal="false"
+      center
+    >
+      <div class="model-select-content">
+        <p class="model-select-hint">请选择用于价格分析的AI大模型：</p>
+        <el-radio-group v-model="selectedAIModel" class="model-radio-group">
+          <el-radio value="dashscope" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><Promotion /></el-icon>
+                通义千问 (Qwen)
+              </div>
+              <div class="model-desc">阿里云通义千问大模型，支持联网搜索</div>
+            </div>
+          </el-radio>
+          <el-radio value="doubao" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><MagicStick /></el-icon>
+                豆包 (Doubao)
+              </div>
+              <div class="model-desc">字节跳动豆包大模型，高性能推理</div>
+            </div>
+          </el-radio>
+          <el-radio value="deepseek" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><ChatDotRound /></el-icon>
+                DeepSeek (V3)
+              </div>
+              <div class="model-desc">深度求索DeepSeek-V3模型，超强推理能力</div>
+            </div>
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <el-button @click="showModelSelectDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          :disabled="!selectedAIModel"
+          @click="handleModelSelectConfirm"
+        >
+          开始分析
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
 import BasePagination from '@/components/BasePagination.vue'
 import MaterialAnalysisDetailDialog from '@/components/analysis/MaterialAnalysisDetailDialog.vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -826,13 +902,26 @@ import {
   Setting,
   DataAnalysis,
   Delete,
-  Link
+  Link,
+  Promotion,
+  MagicStick
 } from '@element-plus/icons-vue'
-import { formatDate, formatNumber } from '@/utils'
+import { formatDate, formatNumber, formatDateTime } from '@/utils'
 import { formatAnalysisDataSources, getDataSourceNote } from '@/utils/dataSourceUtils'
 import { useSelectionAcrossPages } from '@/composables/useSelectionAcrossPages'
-import { getProjectAnalysisResults, getProjectPricedMaterialsAnalysis, batchAnalyzeMaterials, analyzePricedMaterials, getMaterialAnalysisResult, getProjectAnalysisStatistics, deleteMaterialAnalysis, getMaterialAnalysisDetail } from '@/api/analysis'
-import { deleteProjectMaterial, batchDeleteProjectMaterials } from '@/api/projects'
+import { getProjectAnalysisResults, getProjectPricedMaterialsAnalysis, batchAnalyzeMaterials, analyzePricedMaterials, getProjectAnalysisStatistics, deleteMaterialAnalysis, getMaterialAnalysisDetail } from '@/api/analysis'
+import { deleteProjectMaterial, batchDeleteProjectMaterials, getProjectMaterials } from '@/api/projects'
+import { useAnalysisStore } from '@/store/analysis'
+
+// 格式化数字，去除末尾的0，不使用千分位逗号
+const formatDecimal = (num, decimals = 4) => {
+  if (typeof num !== 'number') return num
+  const res = num.toFixed(decimals)
+  if (res.includes('.')) {
+    return res.replace(/\.?0+$/, '')
+  }
+  return res
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -846,6 +935,11 @@ const showAdjustDialog = ref(false)
 const showAnalysisDetailDialog = ref(false)
 const selectedMaterialId = ref(null)
 
+// AI模型选择相关
+const showModelSelectDialog = ref(false)
+const selectedAIModel = ref('dashscope') // 默认使用通义千问
+const pendingAnalysisAction = ref('') // 'startAnalysis' 或 'batchReanalyze'
+
 // 缓存加载状态，避免切换频繁重新请求导致闪烁
 const hasLoadedUnpriced = ref(false)
 const hasLoadedPriced = ref(false)
@@ -853,6 +947,7 @@ const hasLoadedPriced = ref(false)
 const currentProject = ref(null)
 const filterStatus = ref('')
 const filterRisk = ref('')
+const searchKeyword = ref('')
 const allUnpricedAnalysisResults = ref([])
 const analysisResults = ref([])
 const selectedResults = ref([])
@@ -860,19 +955,42 @@ const tableRef = ref()
 const {
   allSelected,
   selectedIds: selectedResultIds,
-  excludedIds,
-  toggleSelectAll,
   clearAll: clearAllSelection,
   handleSelectionChange,
   syncSelectionOnPage,
-  getSelectedIds,
   createSelectedCount
 } = useSelectionAcrossPages('id')
-const selectedCount = createSelectedCount(() => pagination.total)
 const currentResult = ref(null)
 const analysisHistory = ref([])
 const materialAnalysisDetail = ref(null)
 const activeResponseTab = ref('formatted')
+
+// 将分析结果ID映射到项目材料ID，方便批量操作时快速定位材料
+const analysisIdToMaterialIdMap = computed(() => {
+  const map = new Map()
+  allUnpricedAnalysisResults.value.forEach(item => {
+    if (item?.id && item?.material_id) {
+      map.set(item.id, item.material_id)
+    }
+  })
+  return map
+})
+
+// 根据当前选择状态（单选/多选/全选）获取对应的项目材料ID列表
+const getSelectedMaterialIds = async () => {
+  if (allSelected.value) {
+    const ids = allUnpricedAnalysisResults.value
+      .map(item => item.material_id)
+      .filter(id => Boolean(id))
+    return Array.from(new Set(ids))
+  }
+
+  const ids = Array.from(selectedResultIds.value)
+    .map(id => analysisIdToMaterialIdMap.value.get(id))
+    .filter(id => Boolean(id))
+
+  return Array.from(new Set(ids))
+}
 
 const buildDataSourceContext = (...candidates) => {
   const normalizeCandidate = (candidate) => {
@@ -942,17 +1060,49 @@ const pricedTableRef = ref(null)
 // 市场信息价材料分析结果分页状态
 const pricedPagination = reactive({
   page: 1,
-  size: 20
+  size: 100
 })
 
-// 分析状态
-const analysisState = reactive({
-  isAnalyzing: false,
-  analysisType: '', // 'unpriced' 或 'priced'
-  progress: 0,
-  currentStep: '',
-  totalSteps: 0,
-  completedSteps: 0
+const analysisStore = useAnalysisStore()
+const projectId = route.query.project_id
+
+// 映射 Store 中的任务状态到本地 analysisState
+const currentTask = computed(() => analysisStore.getTaskByProjectId(projectId))
+
+const analysisState = computed(() => {
+  const task = currentTask.value
+  if (task && task.status === 'running') {
+    return {
+      isAnalyzing: true,
+      analysisType: task.type,
+      progress: task.progress,
+      currentStep: task.currentStep,
+      totalSteps: task.totalSteps,
+      completedSteps: task.completedSteps
+    }
+  }
+  return {
+    isAnalyzing: false,
+    analysisType: '',
+    progress: 0,
+    currentStep: '',
+    totalSteps: 0,
+    completedSteps: 0
+  }
+})
+
+// 监听任务完成，刷新数据
+watch(() => currentTask.value?.status, async (newStatus, oldStatus) => {
+  if (newStatus === 'completed' && oldStatus === 'running') {
+    // 任务完成，刷新数据
+    if (currentTask.value.type === 'unpriced') {
+      activeAnalysisType.value = 'unpriced'
+      await fetchAnalysisResults()
+    } else if (currentTask.value.type === 'priced') {
+      activeAnalysisType.value = 'priced'
+      await fetchPricedAnalysisResults()
+    }
+  }
 })
 
 // 统计数据
@@ -966,9 +1116,11 @@ const analysisStats = reactive({
 // 分页数据
 const pagination = reactive({
   page: 1,
-  size: 20,
+  size: 1000,
   total: 0
 })
+
+const selectedCount = createSelectedCount(() => pagination.total)
 
 // 调整表单
 const adjustForm = reactive({
@@ -990,18 +1142,19 @@ const isGuidedPriceAnalysis = (item) => item?.analysis_model === 'guided_price_c
 
 const applyAnalysisPagination = () => {
   const total = allUnpricedAnalysisResults.value.length
-  const pageSize = pagination.size || 1
-  let currentPage = pagination.page || 1
-
-  const maxPage = total === 0 ? 1 : Math.ceil(total / pageSize)
-  if (currentPage > maxPage) {
-    currentPage = maxPage
-    pagination.page = maxPage
+  
+  // 强制显示所有数据，取消分页限制
+  pagination.total = total
+  // 设置页码为1
+  pagination.page = 1
+  // 将每页大小设置为总数，确保BasePagination组件知道我们在显示所有数据
+  // 即使BasePagination没有直接使用这个值来切片，保持状态一致也是好的
+  if (total > 0) {
+    pagination.size = total
   }
 
-  const start = (currentPage - 1) * pageSize
-  const end = start + pageSize
-  analysisResults.value = allUnpricedAnalysisResults.value.slice(start, end)
+  // 直接显示所有数据，不再进行slice操作
+  analysisResults.value = allUnpricedAnalysisResults.value
 }
 
 // 获取分析结果
@@ -1014,35 +1167,94 @@ const fetchAnalysisResults = async () => {
   
   loading.value = true
   try {
+    const projectId = route.query.project_id
     const baseParams = {
       status: filterStatus.value || undefined,
-      // 使用后端的风险等级筛选；不再用 is_reasonable 粗略映射
-      risk_level: filterRisk.value || undefined
+      risk_level: filterRisk.value || undefined,
+      material_name: searchKeyword.value || undefined
     }
 
-    const chunkSize = Math.max(pagination.size, 100)
-    const rawResults = []
+    // 1. 获取所有分析结果 (PriceAnalysis)
+    const chunkSize = Math.max(pagination.size, 1000)
+    const analysisRecords = []
     let offset = 0
 
     while (true) {
-      const response = await getProjectAnalysisResults(route.query.project_id, {
+      const response = await getProjectAnalysisResults(projectId, {
         ...baseParams,
         skip: offset,
         limit: chunkSize
       }, { __skipLoading: true })
 
       const items = response?.results || []
-      if (!items.length) {
-        break
-      }
-
-      rawResults.push(...items)
-
-      if (items.length < chunkSize) {
-        break
-      }
-
+      if (!items.length) break
+      analysisRecords.push(...items)
+      if (items.length < chunkSize) break
       offset += items.length
+    }
+
+    // 2. 获取所有无信息价材料 (ProjectMaterial where is_matched=False)
+    // 只有当没有设置特定的分析结果筛选条件时，才去获取所有材料并合并
+    let finalResults = []
+    const shouldFetchAllMaterials = !filterStatus.value && !filterRisk.value
+
+    if (shouldFetchAllMaterials) {
+      const unpricedMaterials = []
+      const materialChunkSize = 1000
+      let page = 1
+      
+      while (true) {
+        const res = await getProjectMaterials(projectId, {
+          page, 
+          size: materialChunkSize, 
+          is_matched: false, // Unpriced only
+          keyword: searchKeyword.value || undefined
+        }, { __skipLoading: true })
+        
+        const items = res.items || []
+        if (!items.length) break
+        unpricedMaterials.push(...items)
+        if (items.length < materialChunkSize) break
+        page++
+      }
+
+      // 创建分析结果映射
+      const analysisMap = new Map()
+      analysisRecords.forEach(record => {
+        if (record.material_id) {
+          analysisMap.set(record.material_id, record)
+        }
+      })
+
+      // 遍历所有材料，优先使用分析结果，否则构造占位符
+      unpricedMaterials.forEach(material => {
+        const analysis = analysisMap.get(material.id)
+        if (analysis) {
+          finalResults.push(analysis)
+        } else {
+          // 构造占位符
+          finalResults.push({
+            id: `temp_${material.id}`, // 临时ID
+            material_id: material.id,
+            material_name: material.material_name,
+            specification: material.specification,
+            unit: material.unit,
+            quantity: material.quantity,
+            project_price: material.unit_price, // 原单价
+            total_price: (material.quantity || 0) * (material.unit_price || 0),
+            status: 'pending', // 默认状态
+            analysis_model: 'ai_analysis', // 假设
+            risk_level: 'unknown',
+            price_variance: null,
+            ai_price: null,
+            is_reasonable: null,
+            created_at: material.created_at
+          })
+        }
+      })
+    } else {
+      // 如果有筛选条件，直接使用分析结果
+      finalResults = analysisRecords
     }
 
     const inferRiskLevel = (variance, isReasonable) => {
@@ -1094,7 +1306,7 @@ const fetchAnalysisResults = async () => {
       return rawVariance
     }
 
-    const filteredRaw = rawResults.filter(item => !isGuidedPriceAnalysis(item))
+    const filteredRaw = finalResults.filter(item => !isGuidedPriceAnalysis(item))
 
     allUnpricedAnalysisResults.value = filteredRaw.map(item => ({
       id: item.id,
@@ -1102,17 +1314,36 @@ const fetchAnalysisResults = async () => {
       material_name: item.material_name || `材料${item.material_id}`,
       specification: item.specification || '',
       unit: item.unit || '',
-      project_price: item.project_price || 0,
-      predicted_price_min: item.predicted_price_min,
+      quantity: Number(item.quantity),
+      project_price: item.project_price, // Ensure project_price is passed
+      originalPrice: Number(item.project_price),
+      originalTotalPrice: Number(item.total_price || (Number(item.project_price || 0) * Number(item.quantity || 0))),
+      aiPrice: item.ai_price !== null ? Number(item.ai_price) : null,
+      predicted_price_min: item.predicted_price_min, // Pass predicted prices
       predicted_price_max: item.predicted_price_max,
-      deviation: computeSignedDeviation(item),
+      predicted_price_avg: item.predicted_price_avg,
+      deviation: computeSignedDeviation(item), // 使用带符号的偏差
       confidence: Math.round((item.confidence_score || 0) * 100),
+      // 优先使用后端返回的风险等级，如果没有则推断
+      level: item.risk_level || inferRiskLevel(item.price_variance, item.is_reasonable),
       risk_level: item.risk_level || inferRiskLevel(item.price_variance, item.is_reasonable),
-      analysis_status: item.status,
+      analysis_status: item.status || 'pending',
       analyzed_at: item.analyzed_at,
-      data_sources: Array.isArray(item.data_sources) ? item.data_sources.map(ds => ds.source).join(', ') : '',
-      risk_factors: item.risk_factors ? item.risk_factors.split('; ') : [],
-      ai_explanation: item.analysis_reasoning || ''
+      data_sources: Array.isArray(item.data_sources) ? item.data_sources.map(ds => ds.source).join(', ') : (item.data_sources || ''),
+      risk_factors: item.risk_factors ? (Array.isArray(item.risk_factors) ? item.risk_factors : item.risk_factors.split('; ')) : [],
+      ai_explanation: item.analysis_reasoning || '',
+      reasoning: item.analysis_reasoning, // Compatible with both
+      isReasonable: item.is_reasonable,
+      status: item.status || 'pending',
+      analysis_model: item.analysis_model,
+      price_range: item.predicted_price_min && item.predicted_price_max
+        ? `${formatNumber(item.predicted_price_min)} - ${formatNumber(item.predicted_price_max)}`
+        : '-',
+      data_source_note: item.data_source_note,
+      features: item.features,
+      implementation_standards: item.implementation_standards,
+      technical_requirements: item.technical_requirements,
+      brand_requirements: item.brand_requirements
     }))
 
     pagination.total = allUnpricedAnalysisResults.value.length
@@ -1146,8 +1377,8 @@ const fetchAnalysisResults = async () => {
     }
 
   } catch (error) {
-    ElMessage.error('获取分析结果失败')
     console.error('获取分析结果失败:', error)
+    ElMessage.error('获取分析结果失败')
   } finally {
     loading.value = false
     hasLoadedUnpriced.value = true
@@ -1211,19 +1442,6 @@ const getConfidenceColor = (confidence) => {
   return '#f56c6c'
 }
 
-// 获取搜索网址列表
-const getSearchUrls = (analysisDetail) => {
-  if (!analysisDetail || !analysisDetail.api_response) {
-    return []
-  }
-
-  // 从API响应中提取搜索网址
-  if (analysisDetail.api_response.search_urls) {
-    return analysisDetail.api_response.search_urls
-  }
-
-  return []
-}
 
 // 获取空状态描述
 const getEmptyStateDescription = () => {
@@ -1237,8 +1455,13 @@ const getEmptyStateDescription = () => {
 
 // 事件处理
 const handleFilterChange = () => {
-  pagination.page = 1
-  fetchAnalysisResults()
+  if (activeAnalysisType.value === 'priced') {
+    pricedPagination.page = 1
+    fetchPricedAnalysisResults()
+  } else {
+    pagination.page = 1
+    fetchAnalysisResults()
+  }
 }
 
 // 市场信息价材料分析结果选择处理
@@ -1298,99 +1521,52 @@ const onSelectionChange = (selection) => {
 
 // 操作方法 - 无信息价材料分析
 const startUnpricedAnalysis = async () => {
+  // 显示模型选择对话框
+  pendingAnalysisAction.value = 'startAnalysis'
+  showModelSelectDialog.value = true
+}
+
+// 模型选择确认处理
+const handleModelSelectConfirm = () => {
+  showModelSelectDialog.value = false
+  if (pendingAnalysisAction.value === 'startAnalysis') {
+    confirmStartAnalysis()
+  } else if (pendingAnalysisAction.value === 'batchReanalyze') {
+    confirmBatchReanalyze()
+  }
+}
+
+// 确认开始分析（模型选择后）
+const confirmStartAnalysis = async () => {
+  let modelName = '通义千问'
+  if (selectedAIModel.value === 'doubao') {
+    modelName = '豆包'
+  } else if (selectedAIModel.value === 'deepseek') {
+    modelName = 'DeepSeek'
+  }
+  
   try {
     await ElMessageBox.confirm(
-      '确定要对该项目进行AI价格分析吗？系统将使用AI大模型分析所有无信息价材料的市场价格。这个过程可能需要较长时间。',
+      `确定要使用 ${modelName} 对该项目进行AI价格分析吗？系统将分析所有无信息价材料的市场价格。此操作将在后台进行，您可以继续其他操作。`,
       'AI价格分析确认',
       {
-        confirmButtonText: '开始分析',
+        confirmButtonText: '开始后台分析',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'info'
       }
     )
     
-    // 开始分析
-    analysisState.isAnalyzing = true
-    analysisState.analysisType = 'unpriced'
-    analysisState.progress = 0
-    analysisState.currentStep = '正在准备AI价格分析...'
-    analysisState.totalSteps = 10
-    analysisState.completedSteps = 0
-    
-    ElMessage.info('AI价格分析已启动...')
-    
-    // 模拟进度更新
-    let progressInterval = setInterval(() => {
-      if (analysisState.progress < 90) {
-        analysisState.progress += Math.random() * 15
-        if (analysisState.progress > 90) analysisState.progress = 90
-        
-        const steps = [
-          '正在分析材料市场价格...',
-          '正在进行价格合理性评估...',
-          '正在生成分析结果...',
-          '正在更新统计数据...'
-        ]
-        const stepIndex = Math.floor((analysisState.progress / 100) * steps.length)
-        analysisState.currentStep = steps[stepIndex] || steps[steps.length - 1]
-        analysisState.completedSteps = Math.floor((analysisState.progress / 100) * analysisState.totalSteps)
-      }
-    }, 1500)
-    
-    try {
-      // 调用批量分析API - 分析项目的所有无信息价材料
-      const result = await batchAnalyzeMaterials(route.query.project_id, {
-        force_reanalyze: true, // 强制重新分析
-        batch_size: 10,
-        preferred_provider: 'qwen',
-        model_name: 'qwen-max'
-      })
-      
-      // 清除进度模拟
-      clearInterval(progressInterval)
-      
-      // 完成分析
-      analysisState.progress = 100
-      analysisState.currentStep = 'AI分析完成！'
-      analysisState.completedSteps = analysisState.totalSteps
-      
-      console.log('批量AI分析结果:', result)
-      
-      ElMessage.success(`AI价格分析完成！成功分析了${result.result?.success_count || result.result?.analyzed_count || '未知数量'}个材料的市场价格`)
-      
-      // 刷新数据并切换到无信息价材料视图
-      activeAnalysisType.value = 'unpriced'
-      await fetchAnalysisResults()
-      
-      // 2秒后隐藏进度条
-      setTimeout(() => {
-        analysisState.isAnalyzing = false
-        analysisState.analysisType = ''
-        analysisState.progress = 0
-        analysisState.currentStep = ''
-        analysisState.completedSteps = 0
-        analysisState.totalSteps = 0
-      }, 2000)
-      
-    } catch (error) {
-      // 清除进度模拟
-      clearInterval(progressInterval)
-      
-      console.error('批量AI分析失败:', error)
-      ElMessage.error('AI分析失败: ' + (error.message || error.response?.data?.detail || '未知错误'))
-      
-      // 重置分析状态
-      analysisState.isAnalyzing = false
-      analysisState.analysisType = ''
-      analysisState.progress = 0
-      analysisState.currentStep = ''
-      analysisState.completedSteps = 0
-      analysisState.totalSteps = 0
-    }
+    // 调用 Store Action 启动后台分析
+    // 不使用 await，让其在后台运行
+    analysisStore.startUnpricedAnalysis(
+      route.query.project_id,
+      modelName,
+      selectedAIModel.value
+    )
     
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('启动批量分析失败')
+      ElMessage.error('启动分析失败')
     }
   }
 }
@@ -1399,91 +1575,17 @@ const startUnpricedAnalysis = async () => {
 const startPricedAnalysis = async () => {
   try {
     await ElMessageBox.confirm(
-      '确定要对该项目进行市场信息价材料价格分析吗？系统将分析项目材料与政府市场信息价的差异情况。这个过程可能需要较长时间。',
+      '确定要对该项目进行市场信息价材料价格分析吗？系统将分析项目材料与政府市场信息价的差异情况。此操作将在后台进行。',
       '市场信息价分析确认',
       {
-        confirmButtonText: '开始分析',
+        confirmButtonText: '开始后台分析',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'info'
       }
     )
     
-    // 开始分析
-    analysisState.isAnalyzing = true
-    analysisState.analysisType = 'priced'
-    analysisState.progress = 0
-    analysisState.currentStep = '正在准备市场信息价分析...'
-    analysisState.totalSteps = 8
-    analysisState.completedSteps = 0
-    
-    ElMessage.info('市场信息价材料分析已启动...')
-    
-    // 模拟进度更新
-    let progressInterval = setInterval(() => {
-      if (analysisState.progress < 90) {
-        analysisState.progress += Math.random() * 15
-        if (analysisState.progress > 90) analysisState.progress = 90
-        
-        const steps = [
-          '正在匹配市场信息价数据...',
-          '正在计算价格差异...',
-          '正在生成差异等级...',
-          '正在更新分析结果...'
-        ]
-        const stepIndex = Math.floor((analysisState.progress / 100) * steps.length)
-        analysisState.currentStep = steps[stepIndex] || steps[steps.length - 1]
-        analysisState.completedSteps = Math.floor((analysisState.progress / 100) * analysisState.totalSteps)
-      }
-    }, 1500)
-    
-    try {
-      // 调用市场信息价材料分析API
-      const result = await analyzePricedMaterials(route.query.project_id, {
-        force_reanalyze: true,
-        include_summary: true
-      })
-      
-      // 清除进度模拟
-      clearInterval(progressInterval)
-      
-      // 完成分析
-      analysisState.progress = 100
-      analysisState.currentStep = '市场信息价分析完成！'
-      analysisState.completedSteps = analysisState.totalSteps
-      
-      console.log('市场信息价材料分析结果:', result)
-      
-      ElMessage.success(`市场信息价分析完成！成功分析了${result.result?.analyzed_count || '未知数量'}个材料的价格差异`)
-      
-      // 刷新数据并切换到市场信息价材料视图
-      activeAnalysisType.value = 'priced'
-      await fetchPricedAnalysisResults()
-      
-      // 2秒后隐藏进度条
-      setTimeout(() => {
-        analysisState.isAnalyzing = false
-        analysisState.analysisType = ''
-        analysisState.progress = 0
-        analysisState.currentStep = ''
-        analysisState.completedSteps = 0
-        analysisState.totalSteps = 0
-      }, 2000)
-      
-    } catch (error) {
-      // 清除进度模拟
-      clearInterval(progressInterval)
-      
-      console.error('市场信息价材料分析失败:', error)
-      ElMessage.error('市场信息价分析失败: ' + (error.message || error.response?.data?.detail || '未知错误'))
-      
-      // 重置分析状态
-      analysisState.isAnalyzing = false
-      analysisState.analysisType = ''
-      analysisState.progress = 0
-      analysisState.currentStep = ''
-      analysisState.completedSteps = 0
-      analysisState.totalSteps = 0
-    }
+    // 调用 Store Action 启动后台分析
+    analysisStore.startPricedAnalysis(route.query.project_id)
     
   } catch (error) {
     if (error !== 'cancel') {
@@ -1532,7 +1634,10 @@ const fetchPricedAnalysisResults = async (silent = false) => {
     // 调用真实的API获取市场信息价材料分析结果
     const response = await getProjectPricedMaterialsAnalysis(route.query.project_id, {
       skip: (pricedPagination.page - 1) * pricedPagination.size,
-      limit: pricedPagination.size
+      limit: pricedPagination.size,
+      status: filterStatus.value || undefined,
+      risk_level: filterRisk.value || undefined,
+      material_name: searchKeyword.value || undefined
     }, { __skipLoading: true })
     
     console.log('市场信息价材料分析API响应:', response)
@@ -1552,7 +1657,9 @@ const fetchPricedAnalysisResults = async (silent = false) => {
         unit: item.unit || '',
         quantity: parseFloat(item.quantity || 0),
         project_unit_price: parseFloat(item.project_unit_price || 0),
-        base_unit_price: parseFloat(item.base_unit_price || 0),
+        base_unit_price: parseFloat(item.base_unit_price || 0), // 合同期平均价
+        original_base_price: parseFloat(item.original_base_price || item.base_unit_price || 0), // 原始基期信息价
+        base_unit: item.base_unit || item.unit || '', // 基期材料单位，用于单位转换
         unit_price_difference: parseFloat(item.unit_price_difference || 0),
         total_price_difference: parseFloat(item.total_price_difference || 0),
         price_difference_rate: parseFloat(item.price_difference_rate || 0),
@@ -1591,20 +1698,173 @@ const getDifferenceLevelType = (level) => {
   const typeMap = {
     'normal': 'success',
     'low': 'warning',
-    'medium': 'danger',
-    'high': 'danger'
+    'medium': 'warning',
+    'high': 'danger',
+    'critical': 'danger',
+    'severe': 'danger'
   }
   return typeMap[level] || 'info'
+}
+
+const hasHistoryPriceRange = (history) => {
+  return history?.predicted_price_min !== null &&
+    history?.predicted_price_min !== undefined &&
+    history?.predicted_price_max !== null &&
+    history?.predicted_price_max !== undefined
 }
 
 const getDifferenceLevelText = (level) => {
   const textMap = {
     'normal': '正常',
-    'low': '轻微差异',
-    'medium': '中等差异',
-    'high': '较大差异'
+    'low': '低风险',
+    'medium': '中风险',
+    'high': '高风险',
+    'critical': '严重风险'
   }
   return textMap[level] || '未知'
+}
+
+// ==================== 单位转换和价格计算逻辑 ====================
+
+// 单位转换系数表
+const unitConversionTable = {
+  // 质量单位 -> kg
+  'kg': { base: 'kg', factor: 1 },
+  'KG': { base: 'kg', factor: 1 },
+  '千克': { base: 'kg', factor: 1 },
+  'g': { base: 'kg', factor: 0.001 },
+  'G': { base: 'kg', factor: 0.001 },
+  '克': { base: 'kg', factor: 0.001 },
+  't': { base: 'kg', factor: 1000 },
+  'T': { base: 'kg', factor: 1000 },
+  '吨': { base: 'kg', factor: 1000 },
+  // 长度单位 -> m
+  'm': { base: 'm', factor: 1 },
+  'M': { base: 'm', factor: 1 },
+  '米': { base: 'm', factor: 1 },
+  'cm': { base: 'm', factor: 0.01 },
+  'CM': { base: 'm', factor: 0.01 },
+  '厘米': { base: 'm', factor: 0.01 },
+  'mm': { base: 'm', factor: 0.001 },
+  'MM': { base: 'm', factor: 0.001 },
+  '毫米': { base: 'm', factor: 0.001 },
+  'km': { base: 'm', factor: 1000 },
+  'KM': { base: 'm', factor: 1000 },
+  '千米': { base: 'm', factor: 1000 },
+  '公里': { base: 'm', factor: 1000 },
+  // 面积单位 -> m²
+  'm²': { base: 'm²', factor: 1 },
+  'm2': { base: 'm²', factor: 1 },
+  'M²': { base: 'm²', factor: 1 },
+  'M2': { base: 'm²', factor: 1 },
+  '平方米': { base: 'm²', factor: 1 },
+  '㎡': { base: 'm²', factor: 1 },
+  // 体积单位 -> m³
+  'm³': { base: 'm³', factor: 1 },
+  'm3': { base: 'm³', factor: 1 },
+  'M³': { base: 'm³', factor: 1 },
+  'M3': { base: 'm³', factor: 1 },
+  '立方米': { base: 'm³', factor: 1 },
+  '方': { base: 'm³', factor: 1 },
+  'L': { base: 'm³', factor: 0.001 },
+  'l': { base: 'm³', factor: 0.001 },
+  '升': { base: 'm³', factor: 0.001 }
+}
+
+// 获取单位转换信息
+const getUnitInfo = (unit) => {
+  if (!unit) return null
+  const trimmedUnit = unit.trim()
+  return unitConversionTable[trimmedUnit] || null
+}
+
+// 计算两个单位之间的转换系数
+const getUnitConversionFactor = (fromUnit, toUnit) => {
+  const fromInfo = getUnitInfo(fromUnit)
+  const toInfo = getUnitInfo(toUnit)
+  if (!fromInfo || !toInfo) return 1
+  if (fromInfo.base !== toInfo.base) return 1
+  return fromInfo.factor / toInfo.factor
+}
+
+// 获取行的单位转换系数
+const getRowConversionFactor = (row) => {
+  const projectUnit = row.unit
+  const baseUnit = row.base_unit || row.unit
+  return getUnitConversionFactor(baseUnit, projectUnit)
+}
+
+// 智能判断价格是否需要转换
+// 如果价格接近项目单价（在50%以内），说明已按项目单位；如果接近大数（基准价），需要转换
+const smartConvertPrice = (price, row, conversionFactor) => {
+  if (!price || conversionFactor === 1) return price
+  
+  const projectPrice = row.project_unit_price
+  
+  // 如果价格接近项目单价（同数量级），说明已经是项目单位，不转换
+  if (projectPrice && Math.abs(price - projectPrice) / projectPrice < 0.5) {
+    return price
+  }
+  
+  // 如果价格比项目单价大很多倍（超过10倍），说明是原始单位，需要转换
+  if (projectPrice && price / projectPrice > 10) {
+    return price / conversionFactor
+  }
+  
+  // 默认不转换（假设已经是项目单位）
+  return price
+}
+
+// 获取转换后的基期信息价（原始匹配价格）
+const getConvertedOriginalBasePrice = (row) => {
+  const conversionFactor = getRowConversionFactor(row)
+  // original_base_price 是原始基期信息价，如果没有则使用 base_unit_price
+  const originalPrice = row.original_base_price || row.base_unit_price
+  return smartConvertPrice(originalPrice, row, conversionFactor)
+}
+
+// 获取转换后的合同期平均价
+const getPricedContractAvgPrice = (row) => {
+  const conversionFactor = getRowConversionFactor(row)
+  // base_unit_price 实际上是合同期平均价（后端命名有点混乱）
+  const avgPrice = row.base_unit_price
+  return smartConvertPrice(avgPrice, row, conversionFactor)
+}
+
+// 价格差异：项目单价 - 转换后的基期信息价
+const getPricedPriceDifference = (row) => {
+  const convertedOriginalBasePrice = getConvertedOriginalBasePrice(row)
+  return row.project_unit_price - convertedOriginalBasePrice
+}
+
+// 风险幅度：(合同期平均价 - 基期信息价) / 基期信息价
+const getPricedRiskRate = (row) => {
+  const convertedOriginalBasePrice = getConvertedOriginalBasePrice(row)
+  const contractAvgPrice = getPricedContractAvgPrice(row)
+  if (convertedOriginalBasePrice === 0) return 0
+  return (contractAvgPrice - convertedOriginalBasePrice) / convertedOriginalBasePrice
+}
+
+// 调差：风险幅度在±5%以内则为0，超过部分乘以数量
+const getPricedPriceAdjustment = (row) => {
+  const riskRate = getPricedRiskRate(row)
+  const threshold = 0.05
+  
+  if (riskRate >= -threshold && riskRate <= threshold) {
+    return 0
+  }
+  
+  const convertedOriginalBasePrice = getConvertedOriginalBasePrice(row)
+  const contractAvgPrice = getPricedContractAvgPrice(row)
+  
+  let excessPerUnit = 0
+  if (riskRate > threshold) {
+    excessPerUnit = contractAvgPrice - convertedOriginalBasePrice * (1 + threshold)
+  } else {
+    excessPerUnit = contractAvgPrice - convertedOriginalBasePrice * (1 - threshold)
+  }
+  
+  return excessPerUnit * row.quantity
 }
 
 
@@ -1621,12 +1881,37 @@ const viewDetail = async (row) => {
     console.log('设置后 showDetailDialog 值:', showDetailDialog.value)
     materialAnalysisDetail.value = null
     
-    // 获取详细的分析数据（包含AI提示词和回复）
+    // 获取详细的分析数据（包含AI提示词、回复和分析历史）
     if (row.material_id) {
-      console.log('正在调用API获取材料详情，material_id:', row.material_id)
-      const detailResponse = await getMaterialAnalysisResult(row.material_id)
-      materialAnalysisDetail.value = detailResponse.data?.analysis || detailResponse.analysis || detailResponse
-      console.log('API响应成功，材料分析详情:', materialAnalysisDetail.value)
+      console.log('正在调用API获取材料详情（含历史），material_id:', row.material_id)
+      const detailResponse = await getMaterialAnalysisDetail(row.material_id)
+
+      // FastAPI 直接返回的数据结构：{ code, message, data }
+      const detailData = detailResponse?.data || detailResponse
+
+      // 兼容旧结构：优先使用 data.analysis_result / data.analysis，其次整体对象
+      materialAnalysisDetail.value =
+        detailData?.analysis_result ||
+        detailData?.analysis ||
+        detailData
+
+      console.log('API响应成功，材料分析详情（analysis_result）:', materialAnalysisDetail.value)
+
+      // 从同一响应中提取分析历史
+      if (detailData?.analysis_history) {
+        analysisHistory.value = detailData.analysis_history.map(hist => ({
+          id: hist.id,
+          action: hist.action,
+          note: hist.note,
+          created_at: hist.created_at,
+          created_by_name: hist.created_by_name || '系统',
+          analysis_model: hist.analysis_model || '',
+          predicted_price_min: hist.predicted_price_min,
+          predicted_price_max: hist.predicted_price_max
+        }))
+      } else {
+        analysisHistory.value = []
+      }
     } else {
       console.warn('row.material_id 为空，无法获取详情')
     }
@@ -1634,25 +1919,6 @@ const viewDetail = async (row) => {
     console.error('获取材料分析详情失败:', error)
     ElMessage.error('获取分析详情失败: ' + error.message)
   }
-  
-  // 获取分析历史
-  // TODO: 调用API获取分析历史
-  analysisHistory.value = [
-    {
-      id: 1,
-      action: 'AI自动分析',
-      note: '基于政府信息价和市场数据进行智能分析',
-      created_at: new Date(),
-      created_by_name: 'AI系统'
-    },
-    {
-      id: 2,
-      action: '人工审核',
-      note: '专家确认分析结果准确性',
-      created_at: new Date(Date.now() - 86400000),
-      created_by_name: '李工程师'
-    }
-  ]
 }
 
 const reanalyze = async (row) => {
@@ -1714,43 +1980,52 @@ const handleAdjustSubmit = async () => {
 
 const batchReanalyze = async () => {
   if (selectedCount.value === 0) return
+  // 显示模型选择对话框
+  pendingAnalysisAction.value = 'batchReanalyze'
+  showModelSelectDialog.value = true
+}
+
+// 确认批量重新分析（模型选择后）
+const confirmBatchReanalyze = async () => {
+  let modelName = '通义千问'
+  if (selectedAIModel.value === 'doubao') {
+    modelName = '豆包'
+  } else if (selectedAIModel.value === 'deepseek') {
+    modelName = 'DeepSeek'
+  }
   
   try {
     await ElMessageBox.confirm(
-      `确定要重新分析已选择的 ${selectedCount.value} 个材料吗？`,
+      `确定要使用 ${modelName} 重新分析已选择的 ${selectedCount.value} 个材料吗？此操作将在后台进行。`,
       '批量重新分析确认',
       {
-        confirmButtonText: '确定',
+        confirmButtonText: '开始后台分析',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'info'
       }
     )
-    // 计算选中的ID（跨页）
-    const fetchAllIds = async () => {
-      const ids = []
-      const size = 1000
-      let page = 1
-      while (true) {
-        const resp = await getProjectAnalysisResults(route.query.project_id, {
-          skip: (page - 1) * size,
-          limit: size,
-          status: filterStatus.value || undefined,
-          is_reasonable: filterRisk.value ? (filterRisk.value === 'normal') : undefined
-        }, { __skipLoading: true })
-        const list = resp?.results || []
-        list
-          .filter(item => !isGuidedPriceAnalysis(item))
-          .forEach(item => ids.push(item.id))
-        const total = resp?.total || pagination.total
-        if (page * size >= total || list.length < size) break
-        page += 1
-      }
-      return ids
+
+    const allMaterialIds = await getSelectedMaterialIds()
+
+    if (allMaterialIds.length === 0) {
+      ElMessage.warning('没有选中的材料需要重新分析')
+      return
     }
-    const ids = await getSelectedIds(fetchAllIds)
-    console.log('准备批量重新分析，IDs:', ids)
-    ElMessage.info('批量重新分析已启动')
+    
+    console.log('准备批量重新分析，材料IDs:', allMaterialIds, '使用模型:', modelName)
+    
+    // 调用 Store Action 启动后台分析
+    analysisStore.startUnpricedAnalysis(
+      route.query.project_id,
+      modelName,
+      selectedAIModel.value,
+      { material_ids: allMaterialIds }
+    )
+    
+    // 清空选择
+    clearAllSelection()
     selectedResults.value = []
+    
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('批量重新分析失败')
@@ -1772,29 +2047,11 @@ const batchDeleteAnalyses = async () => {
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
 
-    const fetchAllIds = async () => {
-      const ids = []
-      const size = 1000
-      let page = 1
-      while (true) {
-        const resp = await getProjectAnalysisResults(route.query.project_id, {
-          skip: (page - 1) * size,
-          limit: size,
-          status: filterStatus.value || undefined,
-          is_reasonable: filterRisk.value ? (filterRisk.value === 'normal') : undefined
-        }, { __skipLoading: true })
-        const list = resp?.results || []
-        list
-          .filter(item => !isGuidedPriceAnalysis(item))
-          .forEach(item => ids.push(item.material_id))
-        const total = resp?.total || pagination.total
-        if (page * size >= total || list.length < size) break
-        page += 1
-      }
-      return ids
+    const ids = await getSelectedMaterialIds()
+    if (ids.length === 0) {
+      ElMessage.warning('没有选中的材料需要删除')
+      return
     }
-
-    const ids = await getSelectedIds(fetchAllIds)
     // 逐个删除
     await Promise.allSettled(ids.map(id => deleteMaterialAnalysis(id)))
     ElMessage.success(`已删除 ${ids.length} 条分析结果`)
@@ -1843,15 +2100,37 @@ const batchReanalyzePriced = async () => {
       }
     )
     
-    const ids = selectedPricedResults.value.map(row => row.material_id)
-    console.log('准备批量重新分析市场信息价材料，IDs:', ids)
-    ElMessage.info('批量重新分析已启动')
+    const materialIds = selectedPricedResults.value
+      .filter(row => row.material_id)
+      .map(row => row.material_id)
     
-    // 清空选择
-    clearPricedSelection()
+    if (materialIds.length === 0) {
+      ElMessage.warning('没有选中的材料需要重新分析')
+      return
+    }
     
-    // 刷新数据
-    await fetchPricedAnalysisResults()
+    console.log('准备批量重新分析市场信息价材料，材料IDs:', materialIds)
+    ElMessage.info(`正在重新分析 ${materialIds.length} 个市场信息价材料...`)
+    
+    // 调用市场信息价材料分析API
+    try {
+      const result = await analyzePricedMaterials(route.query.project_id, {
+        material_ids: materialIds,
+        batch_size: 10
+      })
+      
+      ElMessage.success(`成功重新分析了 ${result.analyzed_count || materialIds.length} 个市场信息价材料`)
+      
+      // 清空选择
+      clearPricedSelection()
+      
+      // 刷新数据
+      await fetchPricedAnalysisResults()
+      
+    } catch (apiError) {
+      console.error('批量重新分析市场信息价材料API调用失败:', apiError)
+      ElMessage.error('批量重新分析失败: ' + (apiError.message || apiError.response?.data?.detail || '未知错误'))
+    }
     
   } catch (error) {
     if (error !== 'cancel') {
@@ -2019,7 +2298,22 @@ const deletePricedAnalysis = async (row) => {
   margin-bottom: 20px;
 
   .stats-row {
+    display: flex;
+    flex-wrap: wrap;
+
+    // 防止el-row的clearfix伪元素影响flex布局
+    &::before,
+    &::after {
+      display: none;
+    }
+
+    :deep(.el-col) {
+      display: flex;
+      flex-direction: column;
+    }
+
     .stat-card {
+      flex: 1;
       background: white;
       border-radius: 8px;
       padding: 20px;
@@ -2229,8 +2523,12 @@ const deletePricedAnalysis = async (row) => {
   // 数据来源样式
   .data-source-table-wrapper {
     margin-top: 8px;
+    width: 100%;
+    overflow-x: auto;
 
     .data-source-table {
+      width: 100%;
+
       .el-table__header th {
         background: #f5f7fa;
         color: #333;
@@ -2250,6 +2548,12 @@ const deletePricedAnalysis = async (row) => {
           font-size: 12px;
           color: #a6a6a6;
         }
+      }
+
+      .price-range-cell {
+        color: #e6a23c;
+        font-weight: 500;
+        font-size: 13px;
       }
     }
 
@@ -2562,6 +2866,12 @@ const deletePricedAnalysis = async (row) => {
   font-weight: 500;
 }
 
+.unit-hint {
+  font-size: 11px;
+  color: #909399;
+  margin-left: 2px;
+}
+
 .source-type {
   font-size: 12px;
   color: #666;
@@ -2622,6 +2932,77 @@ const deletePricedAnalysis = async (row) => {
     
     p {
       margin: 0;
+    }
+  }
+}
+
+// AI模型选择对话框样式
+.model-select-content {
+  padding: 0 20px;
+  
+  .model-select-hint {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    color: $text-secondary;
+    text-align: center;
+  }
+  
+  .model-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    
+    .model-radio-item {
+      width: 100%;
+      height: auto !important;
+      padding: 16px 20px !important;
+      margin: 0 !important;
+      border-radius: 12px !important;
+      transition: all 0.3s ease;
+      
+      &:hover {
+        border-color: $color-primary;
+        box-shadow: 0 4px 12px rgba(64, 158, 255, 0.15);
+      }
+      
+      &.is-checked {
+        border-color: $color-primary;
+        background: linear-gradient(135deg, rgba(64, 158, 255, 0.08) 0%, rgba(64, 158, 255, 0.02) 100%);
+        box-shadow: 0 4px 16px rgba(64, 158, 255, 0.2);
+      }
+      
+      :deep(.el-radio__input) {
+        margin-top: 4px;
+      }
+      
+      :deep(.el-radio__label) {
+        padding-left: 12px;
+        width: 100%;
+      }
+      
+      .model-info {
+        .model-name {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 16px;
+          font-weight: 600;
+          color: $text-primary;
+          margin-bottom: 6px;
+          
+          .el-icon {
+            font-size: 20px;
+            color: $color-primary;
+          }
+        }
+        
+        .model-desc {
+          font-size: 13px;
+          color: $text-secondary;
+          line-height: 1.4;
+        }
+      }
     }
   }
 }

@@ -283,6 +283,17 @@ class ReportService:
             # 生成完整的分析材料数据
             analysis_materials = self._generate_analysis_materials_data(materials, analyses)
             
+            # 筛选核增（减）额为正数的数据，并按权重百分比降序排序，显示全部数据
+            analysis_materials = [
+                m for m in analysis_materials 
+                if m.get('adjustment', 0) > 0
+            ]
+            # 使用权重百分比进行排序，权重高的材料排在前面
+            analysis_materials.sort(
+                key=lambda x: x.get('weight_percentage', 0),
+                reverse=True
+            )
+            
             # 生成市场信息价材料数据
             guidance_price_materials = await self._generate_guidance_price_materials_data(db, project_id, materials, analyses)
             
@@ -705,12 +716,42 @@ class ReportService:
                 # 获取价格数据
                 original_price = float(api_data.get('project_unit_price', 0))
                 guidance_price = float(api_data.get('base_unit_price', 0))
+                # 新增：获取基期信息价和单位，用于前端计算差异
+                original_base_price = float(api_data.get('original_base_price', 0) or 0)
+                if original_base_price == 0 and guidance_price > 0:
+                    # 如果没有基期信息价（旧数据），使用合同期平均价作为基准
+                    original_base_price = guidance_price
+
+                base_unit = api_data.get('base_unit', '')
+
                 quantity = float(record.quantity or 0)
                 
-                # 计算合计价格和调整额
+                # 使用与前端一致的逻辑重新计算差异数据 (AnalysisDetails.vue)
+                
+                # 1. 风险幅度 (Risk Rate): (合同期平均价 - 基期信息价) / 基期信息价
+                # guidance_price 对应 Contract Average Price
+                risk_rate_val = 0.0
+                if original_base_price > 0:
+                    risk_rate_val = (guidance_price - original_base_price) / original_base_price
+                risk_rate = risk_rate_val * 100
+                
+                # 2. 调差 (Adjustment): 超过 +/- 5% 的部分
+                adjustment = 0.0
+                threshold = 0.05
+                
+                if risk_rate_val > threshold:
+                    excess_per_unit = guidance_price - original_base_price * (1 + threshold)
+                    adjustment = excess_per_unit * quantity
+                elif risk_rate_val < -threshold:
+                    excess_per_unit = guidance_price - original_base_price * (1 - threshold)
+                    adjustment = excess_per_unit * quantity
+                
+                # 3. 价格差异 (Price Diff): 项目单价 - 基期信息价
+                # 注意：前端 AnalysisDetails.vue 中 getPricedPriceDifference = project_unit_price - convertedOriginalBasePrice
+                price_diff = original_price - original_base_price
+                
                 original_total = original_price * quantity
                 guidance_total = guidance_price * quantity
-                adjustment = original_total - guidance_total
                 
                 total_amount += abs(original_total)
                 
@@ -718,10 +759,14 @@ class ReportService:
                     "record": record,
                     "original_price": original_price,
                     "guidance_price": guidance_price,
+                    "original_base_price": original_base_price,
+                    "base_unit": base_unit,
                     "quantity": quantity,
                     "original_total": original_total,
                     "guidance_total": guidance_total,
-                    "adjustment": adjustment
+                    "adjustment": adjustment,
+                    "price_diff": price_diff,
+                    "risk_rate": risk_rate
                 })
             
             # 生成最终结果
@@ -739,9 +784,13 @@ class ReportService:
                     "quantity": item_data["quantity"],
                     "original_price": item_data["original_price"],
                     "guidance_price": item_data["guidance_price"],
+                    "original_base_price": item_data["original_base_price"],
+                    "base_unit": item_data["base_unit"],
                     "original_total_price": item_data["original_total"],
                     "guidance_total_price": item_data["guidance_total"],
                     "adjustment": item_data["adjustment"],
+                    "price_diff": item_data["price_diff"],
+                    "risk_rate": item_data["risk_rate"],
                     "weight_percentage": round(weight_percentage, 1),
                     "material_type": "guidance_price"
                 }

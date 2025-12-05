@@ -298,7 +298,9 @@ class ProjectService:
         skip: int = 0,
         limit: int = 100,
         is_matched: Optional[bool] = None,
-        is_problematic: Optional[bool] = None
+        is_problematic: Optional[bool] = None,
+        keyword: Optional[str] = None,
+        unit: Optional[str] = None
     ) -> List[ProjectMaterial]:
         """获取项目材料列表"""
         stmt = select(ProjectMaterial).where(
@@ -310,6 +312,21 @@ class ProjectService:
         
         if is_problematic is not None:
             stmt = stmt.where(ProjectMaterial.is_problematic == is_problematic)
+        
+        if keyword:
+            keyword_str = keyword.strip()
+            if keyword_str:
+                keyword_pattern = f"%{keyword_str}%"
+                stmt = stmt.where(
+                    or_(
+                        ProjectMaterial.material_name.ilike(keyword_pattern),
+                        ProjectMaterial.serial_number.ilike(keyword_pattern),
+                        ProjectMaterial.specification.ilike(keyword_pattern)
+                    )
+                )
+        
+        if unit:
+            stmt = stmt.where(ProjectMaterial.unit == unit)
         
         stmt = stmt.offset(skip).limit(limit).order_by(ProjectMaterial.id)
         result = await db.execute(stmt)

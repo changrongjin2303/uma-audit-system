@@ -237,6 +237,8 @@ class BaseMaterialSearchRequest(BaseModel):
     category: Optional[str] = Field(None, description="材料分类")
     category_id: Optional[int] = Field(None, description="分类ID")
     region: Optional[str] = Field(None, description="适用地区")
+    province: Optional[str] = Field(None, description="省份")
+    city: Optional[str] = Field(None, description="城市")
     price_min: Optional[float] = Field(None, ge=0, description="价格下限")
     price_max: Optional[float] = Field(None, ge=0, description="价格上限")
     effective_date_start: Optional[datetime] = Field(None, description="生效日期开始")
@@ -254,6 +256,26 @@ class BaseMaterialSearchRequest(BaseModel):
             if v < values['price_min']:
                 raise ValueError('价格上限不能小于价格下限')
         return v
+
+
+class BaseMaterialPeriodDeleteRequest(BaseModel):
+    """按期数批量删除基准材料请求"""
+    price_date: Optional[str] = Field(None, description="信息价期数 (YYYY-MM)，为空表示未填写期数的数据")
+    price_type: Optional[str] = Field(None, description="信息价类型 (provincial/municipal)")
+    region: Optional[str] = Field(None, description="地区或区县")
+    province: Optional[str] = Field(None, description="省份")
+    city: Optional[str] = Field(None, description="城市")
+
+    @validator('price_date', 'price_type', 'region', 'province', 'city', pre=True)
+    def normalize_text_field(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value or value.lower() in {"none", "null"}:
+                return None
+            return value
+        return str(v)
 
 
 class BaseMaterialBatchOperation(BaseModel):

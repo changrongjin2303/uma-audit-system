@@ -34,7 +34,7 @@ class PricedMaterialAnalysisService:
         self,
         db: AsyncSession,
         project_id: int,
-        material_ids: List[int],
+        material_ids: Optional[List[int]] = None,
         batch_size: int = 10
     ) -> Dict[str, Any]:
         """
@@ -43,12 +43,25 @@ class PricedMaterialAnalysisService:
         Args:
             db: 数据库会话
             project_id: 项目ID
-            material_ids: 要分析的材料ID列表
+            material_ids: 要分析的材料ID列表，如果为空则分析所有已匹配的材料
             batch_size: 批量处理大小
             
         Returns:
             分析结果字典
         """
+        # 如果没有提供材料ID，则获取所有已匹配的材料ID
+        if not material_ids:
+            logger.info(f"未提供材料ID，将获取项目 {project_id} 所有已匹配的材料")
+            stmt = select(ProjectMaterial.id).where(
+                and_(
+                    ProjectMaterial.project_id == project_id,
+                    ProjectMaterial.is_matched == True,
+                    ProjectMaterial.matched_material_id.isnot(None)
+                )
+            )
+            result = await db.execute(stmt)
+            material_ids = list(result.scalars().all())
+            
         logger.info(f"开始分析项目 {project_id} 的市场信息价材料价格差异，材料数量: {len(material_ids)}")
         
         analyzed_count = 0
@@ -375,22 +388,36 @@ class PricedMaterialAnalysisService:
                     ).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
                     contract_period_prices = [float(p) for p in price_values]
 
-        # 计算价格差异
-        price_difference = project_price - contract_average_price
-        price_difference_rate = Decimal('0')
+        # 计算逻辑调整：与前端展示保持一致 (AnalysisDetails.vue)
         
-        if contract_average_price > 0:
-            price_difference_rate = (price_difference / contract_average_price).quantize(
+        # 1. 计算风险幅度 (Risk Rate): (合同期平均价 - 基期信息价) / 基期信息价
+        risk_rate = Decimal('0')
+        if base_price > 0:
+            risk_rate = ((contract_average_price - base_price) / base_price).quantize(
                 Decimal('0.0001'), rounding=ROUND_HALF_UP
             )
+            
+        # 2. 计算调差 (Adjustment): 超过 +/- 5% 的部分
+        adjustment_unit_price = Decimal('0')
         
-        # 计算合价差（单价差 × 数量）
-        total_price_difference = price_difference * quantity
+        if risk_rate > self.price_threshold:
+            adjustment_unit_price = contract_average_price - base_price * (Decimal('1') + self.price_threshold)
+        elif risk_rate < -self.price_threshold:
+            adjustment_unit_price = contract_average_price - base_price * (Decimal('1') - self.price_threshold)
+            
+        total_price_difference = adjustment_unit_price * quantity
         
-        # 判断是否有显著差异
-        has_difference = abs(price_difference_rate) >= self.price_threshold
+        # 3. 计算价格差异 (Price Diff): 项目单价 - 基期信息价
+        price_difference = project_price - base_price
         
-        # 确定差异等级
+        # 变量映射到API响应
+        # price_difference_rate 对应 风险幅度
+        price_difference_rate = risk_rate
+        
+        # 判断是否有显著差异 (基于风险幅度是否超过阈值)
+        has_difference = abs(risk_rate) > self.price_threshold
+        
+        # 确定差异等级 (基于风险幅度)
         difference_level = self._get_difference_level(price_difference_rate)
         
         analysis_result = {
@@ -464,15 +491,25 @@ class PricedMaterialAnalysisService:
         
         try:
             from app.models.analysis import PriceAnalysis, AnalysisStatus
-            from datetime import datetime
+            from sqlalchemy import delete
             
             for diff in differences:
                 # 先删除该材料的旧分析记录（如果存在）
-                stmt_delete = select(PriceAnalysis).where(PriceAnalysis.material_id == diff['material_id'])
-                result = await db.execute(stmt_delete)
-                existing_analysis = result.scalar_one_or_none()
-                if existing_analysis:
-                    await db.delete(existing_analysis)
+                # 使用 delete 语句直接删除，避免多条记录导致 scalar_one_or_none 报错
+                stmt_delete = delete(PriceAnalysis).where(PriceAnalysis.material_id == diff['material_id'])
+                await db.execute(stmt_delete)
+                
+                # 如果分析失败，保存失败状态
+                if diff.get('analysis_status') == 'failed':
+                    analysis = PriceAnalysis(
+                        material_id=diff['material_id'],
+                        status=AnalysisStatus.FAILED,
+                        analysis_reasoning=f"分析失败: {diff.get('error', '未知错误')}",
+                        created_at=func.now(),
+                        updated_at=func.now()
+                    )
+                    db.add(analysis)
+                    continue
                 
                 # 创建新的分析记录
                 analysis = PriceAnalysis(

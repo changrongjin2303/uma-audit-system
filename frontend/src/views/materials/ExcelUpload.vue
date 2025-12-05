@@ -129,21 +129,86 @@
       </template>
 
       <!-- 批量操作工具栏 -->
-      <div v-if="selectedMaterials.length > 0" class="batch-toolbar">
-        <el-tag type="info">已选择 {{ selectedMaterials.length }} 项</el-tag>
-        <el-button type="success" size="small" @click="batchFavorite(true)">
-          批量收藏
-        </el-button>
-        <el-button type="warning" size="small" @click="batchFavorite(false)">
-          批量取消收藏
-        </el-button>
-        <el-button type="info" size="small" @click="clearSelection">
-          清空选择
-        </el-button>
+      <div class="batch-toolbar">
+        <el-radio-group v-model="viewMode" size="small" style="margin-right: 16px;">
+            <el-radio-button label="grouped">按期数折叠</el-radio-button>
+            <el-radio-button label="flat">平铺列表</el-radio-button>
+        </el-radio-group>
+
+        <template v-if="selectedMaterials.length > 0">
+          <el-tag type="info">已选择 {{ selectedMaterials.length }} 项</el-tag>
+          <el-button type="success" size="small" @click="batchFavorite(true)">
+            批量收藏
+          </el-button>
+          <el-button type="warning" size="small" @click="batchFavorite(false)">
+            批量取消收藏
+          </el-button>
+          <el-button type="info" size="small" @click="clearSelection">
+            清空选择
+          </el-button>
+        </template>
       </div>
+
+      <!-- 期数分组表格 -->
+      <el-table
+        v-if="viewMode === 'grouped'"
+        ref="periodTableRef"
+        v-loading="loading"
+        :data="filteredPeriods"
+        style="width: 100%"
+        class="periods-table"
+        max-height="500"
+        :row-key="(row) => `${row.price_date}-${row.region}-${row.price_type}`"
+      >
+        <el-table-column type="expand">
+            <template #default="{ row }">
+                <div class="expanded-table-container">
+                    <period-material-query-list 
+                        :period="row" 
+                        @view="viewDetail"
+                    />
+                </div>
+            </template>
+        </el-table-column>
+        <el-table-column prop="price_date" label="期数" min-width="220" sortable>
+          <template #default="{ row }">
+            <span class="period-cell">{{ getPeriodText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="region" label="地区" min-width="280">
+          <template #default="{ row }">
+            <span class="region-cell">{{ getApplicableRegionText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="price_type" label="类型" min-width="200">
+          <template #default="{ row }">
+            <el-tag :type="getJournalType(row)" size="default">
+              {{ getJournalText(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="count" label="材料数量" min-width="200" sortable>
+          <template #default="{ row }">
+            <el-tag type="info" size="default">{{ row.count }} 条</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <div class="action-buttons">
+              <el-button type="primary" link size="small" @click="expandPeriodRow(row)">
+                展开
+              </el-button>
+              <el-button type="success" link size="small" @click="viewPeriodAsFlat(row)">
+                查看列表
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
 
       <!-- 结果表格 -->
       <el-table
+        v-else
         ref="tableRef"
         v-loading="loading"
         :data="materials"
@@ -202,7 +267,7 @@
       </el-table>
 
       <!-- 分页 -->
-      <div v-if="materials.length > 0" class="pagination-wrapper">
+      <div v-if="viewMode === 'flat' && materials.length > 0" class="pagination-wrapper">
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
@@ -216,7 +281,7 @@
       </div>
 
       <!-- 空状态 -->
-      <el-empty v-else-if="!loading" description="没有找到匹配的材料">
+      <el-empty v-else-if="!loading && ((viewMode === 'flat' && materials.length === 0) || (viewMode === 'grouped' && filteredPeriods.length === 0))" description="没有找到匹配的材料">
         <el-button type="primary" @click="resetFilters">清空筛选条件</el-button>
       </el-empty>
     </el-card>
@@ -224,7 +289,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Search,
@@ -232,15 +297,35 @@ import {
   Refresh
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
-import { getBaseMaterials, updateBaseMaterial, getRegions } from '@/api/materials'
+import { getBaseMaterials, updateBaseMaterial, getRegions, searchSimilarBaseMaterials, getMaterialPeriods } from '@/api/materials'
 import { ElMessageBox } from 'element-plus'
+import PeriodMaterialQueryList from './components/PeriodMaterialQueryList.vue'
 
 // 响应式数据
+const viewMode = ref('grouped') // 'grouped' | 'flat'
+const periods = ref([])
+const filteredPeriods = computed(() => {
+  return periods.value.filter(p => {
+    if (searchForm.price_type && p.price_type !== searchForm.price_type) return false
+    
+    if (searchForm.region) {
+       const match = p.region === searchForm.region || 
+                     p.province === searchForm.region || 
+                     p.city === searchForm.region
+       if (!match) return false
+    }
+    
+    if (searchForm.price_date && p.price_date !== searchForm.price_date) return false
+    
+    return true
+  })
+})
 const loading = ref(false)
 const activeCollapse = ref(['advanced'])
 const materials = ref([])
 const selectedMaterials = ref([])
 const tableRef = ref()
+const periodTableRef = ref()
 
 // 搜索表单
 const searchForm = reactive({
@@ -263,6 +348,23 @@ const pagination = reactive({
 
 // 搜索材料
 const handleSearch = async () => {
+  if ((searchForm.name && searchForm.name.trim()) || (searchForm.specification && searchForm.specification.trim())) {
+     if (viewMode.value !== 'flat') {
+       viewMode.value = 'flat'
+     } else {
+       fetchMaterials()
+     }
+     return
+  }
+
+  if (viewMode.value === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
+}
+
+const fetchMaterials = async () => {
   loading.value = true
   try {
     const params = {
@@ -292,6 +394,22 @@ const handleSearch = async () => {
   }
 }
 
+const fetchPeriods = async () => {
+  loading.value = true
+  try {
+    const res = await getMaterialPeriods()
+    const data = res.data?.data || res.data || res
+    // data可能是数组，也可能是{periods: [...]}格式
+    periods.value = Array.isArray(data) ? data : (data.periods || [])
+    console.log('获取到期数列表:', periods.value.length, '条')
+  } catch (error) {
+    console.error('获取期数列表失败', error)
+    ElMessage.error('获取期数列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 // 重置筛选
 const resetFilters = () => {
   Object.assign(searchForm, {
@@ -304,7 +422,12 @@ const resetFilters = () => {
   })
   specOptions.value = []
   pagination.page = 1
-  handleSearch()
+  
+  if (viewMode.value === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
 }
 
 const fetchAvailableRegions = async (priceType = null) => {
@@ -329,6 +452,128 @@ const handleFilterChange = () => {
 // 导出结果
 const exportResults = () => {
   ElMessage.info('导出功能开发中...')
+}
+
+// 获取期刊显示文本
+const getJournalText = (row) => {
+  // 优先使用price_type + province/city 字段构建期刊信息
+  if (row.price_type && (row.province || row.city)) {
+    const province = getProvinceText(row.province)
+    const city = getCityText(row.city)
+
+    if (row.price_type === 'provincial') {
+      // 省刊：显示省份 + 省刊
+      return `${province}省刊`
+    } else if (row.price_type === 'municipal' && city) {
+      // 市刊：显示城市 + 市刊
+      return `${city}市刊`
+    }
+  }
+
+  // 兼容旧数据：使用journal_type字段
+  if (row.journal_type) {
+    return row.journal_type
+  }
+
+  // 从category字段解析
+  if (row.category) {
+    const parts = row.category.split('-')
+    if (parts.length >= 3) {
+      const type = parts[0] === 'municipal' ? '市刊' : '省刊'
+      return type
+    }
+  }
+
+  return '-'
+}
+
+// 获取期刊标签类型
+const getJournalType = (row) => {
+  if (row.price_type === 'provincial') {
+    return 'success'
+  } else if (row.price_type === 'municipal') {
+    return 'primary'
+  }
+
+  // 兼容旧数据
+  if (row.journal_type && row.journal_type.includes('省')) {
+    return 'success'
+  }
+
+  return 'primary'
+}
+
+// 获取适用地区文本
+const getApplicableRegionText = (row) => {
+  // 省刊显示省份名称
+  if (row.price_type === 'provincial') {
+    if (row.province) {
+      return getProvinceText(row.province) + '省'
+    }
+    return '浙江省' // 默认显示浙江省
+  }
+
+  // 市刊显示具体适用地区
+  if (row.price_type === 'municipal' && row.region) {
+    return getRegionText(row.region)
+  }
+
+  // 兼容旧数据
+  if (row.journal_type && row.journal_type.includes('省') && row.province) {
+    return getProvinceText(row.province) + '省'
+  }
+
+  if (row.journal_type && row.journal_type.includes('市') && row.region) {
+    return getRegionText(row.region)
+  }
+
+  return '-'
+}
+
+// 省份代码到中文的映射
+const getProvinceText = (province) => {
+  if (!province) return ''
+
+  if (/[\u4e00-\u9fa5]/.test(province)) {
+    return province.replace(/省$/, '') // 去掉末尾的"省"字
+  }
+
+  const provinceMap = {
+    'zhejiang': '浙江',
+    'jiangsu': '江苏',
+    'guangdong': '广东',
+    'shandong': '山东',
+    'beijing': '北京',
+    'shanghai': '上海',
+    'tianjin': '天津',
+    'chongqing': '重庆'
+  }
+
+  return provinceMap[province] || province
+}
+
+// 城市代码到中文的映射
+const getCityText = (city) => {
+  if (!city) return ''
+
+  if (/[\u4e00-\u9fa5]/.test(city)) {
+    return city.replace(/市$/, '') // 去掉末尾的"市"字
+  }
+
+  const cityMap = {
+    'hangzhou': '杭州',
+    'ningbo': '宁波',
+    'wenzhou': '温州',
+    'nanjing': '南京',
+    'suzhou': '苏州',
+    'wuxi': '无锡',
+    'guangzhou': '广州',
+    'shenzhen': '深圳',
+    'beijing': '北京',
+    'shanghai': '上海'
+  }
+
+  return cityMap[city] || city
 }
 
 // 地区代码到中文的映射
@@ -491,10 +736,44 @@ const handlePageChange = (page) => {
   handleSearch()
 }
 
+const expandPeriodRow = (row) => {
+  if (periodTableRef.value) {
+    periodTableRef.value.toggleRowExpansion(row, true)
+  }
+}
+
+const viewPeriodAsFlat = (row) => {
+  searchForm.price_type = row.price_type || ''
+  const regionValue = row.price_type === 'provincial'
+    ? (row.province || row.region || '')
+    : (row.region || row.city || '')
+  searchForm.region = regionValue
+  searchForm.price_date = row.price_date && row.price_date !== 'None' ? row.price_date : ''
+  pagination.page = 1
+  const switched = viewMode.value !== 'flat'
+  if (switched) {
+    viewMode.value = 'flat'
+  } else {
+    fetchMaterials()
+  }
+}
+
 // 初始化
 onMounted(() => {
   fetchAvailableRegions()
-  handleSearch()
+  if (viewMode.value === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
+})
+
+watch(viewMode, (newMode) => {
+  if (newMode === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
 })
 
 watch(() => searchForm.price_type, async (newType) => {
@@ -567,6 +846,11 @@ watch(() => searchForm.name, (nv) => {
 </script>
 
 <style lang="scss" scoped>
+.expanded-table-container {
+    padding: 10px 20px;
+    background-color: #f8f9fa;
+}
+
 .price-query-container {
   padding: 20px;
 }
@@ -654,6 +938,24 @@ watch(() => searchForm.name, (nv) => {
     display: flex;
     justify-content: center;
     margin-top: 20px;
+  }
+}
+
+.periods-table {
+  .period-cell {
+    font-weight: 600;
+    font-size: 15px;
+    color: #1f2d3d;
+  }
+
+  .region-cell {
+    font-size: 14px;
+    color: #606266;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 8px;
   }
 }
 

@@ -107,14 +107,14 @@
           <div class="filter-right">
             <el-select
               v-model="levelFilter"
-              placeholder="选择差异等级"
+              placeholder="选择风险等级"
               clearable
               style="width: 150px; margin-right: 12px;"
             >
               <el-option label="正常" value="normal" />
-              <el-option label="轻微差异" value="low" />
-              <el-option label="中等差异" value="medium" />
-              <el-option label="严重差异" value="high" />
+              <el-option label="低风险" value="low" />
+              <el-option label="中风险" value="medium" />
+              <el-option label="高风险" value="high" />
             </el-select>
             
             <el-input
@@ -195,7 +195,7 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="difference_level" label="差异等级" width="120">
+          <el-table-column prop="difference_level" label="风险等级" width="120">
             <template #default="{ row }">
               <el-tag :type="getDifferenceLevelType(row.difference_level)" size="small">
                 {{ getDifferenceLevelText(row.difference_level) }}
@@ -254,7 +254,7 @@ import {
   Download
 } from '@element-plus/icons-vue'
 import { formatNumber } from '@/utils'
-import { getProjectAnalysisResults } from '@/api/analysis'
+import { getProjectPricedMaterialsAnalysis } from '@/api/analysis'
 
 const route = useRoute()
 const router = useRouter()
@@ -337,39 +337,32 @@ const fetchAnalysisResults = async () => {
 
   loading.value = true
   try {
-    // 调用真实API获取项目的分析结果
-    const response = await getProjectAnalysisResults(projectId, {
+    // 调用真实API获取项目的市场信息价分析结果
+    const response = await getProjectPricedMaterialsAnalysis(projectId, {
       skip: 0,
-      limit: 1000  // 获取所有结果
+      limit: 1000  // 获取所有结果以便在前端进行筛选和统计
     })
     
     console.log('原始API响应:', response)
     
     // 转换API返回的数据格式为前端需要的格式
-    // 后端直接返回结构化数据，不需要再取data
     const analysisResults = response.results || []
     differences.value = analysisResults.map(item => {
-      const projectPrice = parseFloat(item.project_price || 0)
-      const avgPrice = parseFloat(item.predicted_price_avg || 0)
-      const unitDiff = projectPrice - avgPrice
-      const totalDiff = unitDiff * parseFloat(item.quantity || 0)
-      const diffRate = avgPrice > 0 ? (unitDiff / avgPrice) : 0
-      
       return {
         material_id: item.material_id,
         material_name: item.material_name || '未知材料',
         specification: item.specification || '',
         unit: item.unit || '',
         quantity: parseFloat(item.quantity || 0),
-        project_unit_price: projectPrice,
-        base_unit_price: avgPrice,
-        unit_price_difference: unitDiff,
-        total_price_difference: totalDiff,
-        price_difference_rate: diffRate,
-        has_difference: !item.is_reasonable,
-        difference_level: item.is_reasonable ? 'normal' : (Math.abs(diffRate) > 0.5 ? 'high' : (Math.abs(diffRate) > 0.3 ? 'medium' : 'low')),
-        base_material_name: item.material_name + '（AI预测价）',
-        analysis_status: item.status || 'completed'
+        project_unit_price: parseFloat(item.project_unit_price || 0),
+        base_unit_price: parseFloat(item.base_unit_price || 0),
+        unit_price_difference: parseFloat(item.unit_price_difference || 0),
+        total_price_difference: parseFloat(item.total_price_difference || 0),
+        price_difference_rate: parseFloat(item.price_difference_rate || 0),
+        has_difference: Boolean(item.has_difference),
+        difference_level: item.difference_level || 'normal',
+        base_material_name: item.base_material_name || '',
+        analysis_status: 'completed' // 既然能获取到结果，说明分析已完成
       }
     })
     
@@ -512,20 +505,24 @@ const getPriceDifferenceClass = (value) => {
 
 const getDifferenceLevelType = (level) => {
   const typeMap = {
-    'normal': '',
+    'normal': 'success',
     'low': 'warning',
-    'medium': 'danger',
-    'high': 'danger'
+    'medium': 'warning',
+    'high': 'danger',
+    'critical': 'danger',
+    'severe': 'danger'
   }
-  return typeMap[level] || ''
+  return typeMap[level] || 'info'
 }
 
 const getDifferenceLevelText = (level) => {
   const textMap = {
     'normal': '正常',
-    'low': '轻微',
-    'medium': '中等',
-    'high': '严重'
+    'low': '低风险',
+    'medium': '中风险',
+    'high': '高风险',
+    'critical': '严重风险',
+    'severe': '严重风险'
   }
   return textMap[level] || level
 }

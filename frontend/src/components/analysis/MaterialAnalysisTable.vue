@@ -187,39 +187,42 @@ const statistics = computed(() => {
   }
 })
 
+// 格式化数字，去除末尾的0，不使用千分位逗号
+const formatDecimal = (num, decimals = 4) => {
+  if (num === null || num === undefined || (typeof num === 'number' && isNaN(num))) return '-'
+  const val = Number(num)
+  const res = val.toFixed(decimals)
+  if (res.includes('.')) {
+    return res.replace(/\.?0+$/, '')
+  }
+  return res
+}
+
 // 格式化数字
 const formatNumber = (row, column, cellValue) => {
   if (!cellValue && cellValue !== 0) return '-'
-  return Number(cellValue).toLocaleString()
+  return formatDecimal(cellValue)
 }
 
 // 格式化货币
 const formatCurrency = (row, column, cellValue) => {
   const value = column === undefined && cellValue === undefined ? row : cellValue
-  if (value === null || value === undefined || (typeof value === 'number' && isNaN(value))) return '-'
-  return Number(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+  return formatDecimal(value)
 }
 
 // 直接格式化货币值
 const formatCurrencyValue = (value) => {
-  if (!value && value !== 0) return '-'
-  return Number(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+  return formatDecimal(value)
 }
 
 // 格式化调整金额
 const formatAdjustment = (row, column, cellValue) => {
   if (!cellValue && cellValue !== 0) return '-'
   const value = Number(cellValue)
-  const formatted = Math.abs(value).toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+  const formatted = formatDecimal(Math.abs(value))
+  if (formatted === '-') return '-'
+  // 如果数值极小（例如显示为0），则不显示正负号
+  if (Number(formatted) === 0) return '0'
   return value > 0 ? `+${formatted}` : `-${formatted}`
 }
 
@@ -368,17 +371,12 @@ const processAnalysisData = (data) => {
     isReasonable: item.is_reasonable
   }))
 
-  const riskFiltered = mapped
-    .filter(item => {
-      const hasAdjustment = Math.abs(item.adjustment || 0) > 1e-6
-      const markedUnreasonable = item.isReasonable === false
-      const hasRiskLevel = item.riskLevel && item.riskLevel !== 'normal'
-      return hasAdjustment || markedUnreasonable || hasRiskLevel
-    })
+  // 移除过滤逻辑，显示所有数据
+  const finalData = mapped
   
-  const totalOriginal = riskFiltered.reduce((sum, item) => sum + Math.abs(item.originalTotalPrice || 0), 0)
+  const totalOriginal = finalData.reduce((sum, item) => sum + Math.abs(item.originalTotalPrice || 0), 0)
 
-  return riskFiltered.map((item, idx) => ({
+  return finalData.map((item, idx) => ({
     ...item,
     sequence: idx + 1,
     weightPercentage: totalOriginal > 0 ? (Math.abs(item.originalTotalPrice || 0) / totalOriginal) * 100 : 0

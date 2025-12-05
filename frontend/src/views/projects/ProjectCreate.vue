@@ -816,21 +816,21 @@ const beforeUpload = (file) => {
   return false // 阻止自动上传
 }
 
-// 杭州市区数据
+// 杭州市区数据（2021年行政区划调整后）
 const hangzhouDistricts = [
   { code: '330102', name: '上城区' },
-  { code: '330103', name: '下城区' },
-  { code: '330104', name: '江干区' },
-  { code: '330105', name: '拱墅区' },
-  { code: '330106', name: '西湖区' },
-  { code: '330108', name: '滨江区' },
-  { code: '330109', name: '萧山区' },
+  { code: '330104', name: '拱墅区' },
+  { code: '330105', name: '西湖区' },
+  { code: '330106', name: '滨江区' },
+  { code: '330107', name: '萧山区' },
   { code: '330110', name: '余杭区' },
   { code: '330111', name: '富阳区' },
   { code: '330112', name: '临安区' },
   { code: '330113', name: '临平区' },
-  { code: '330114', name: '桐庐区' },
-  { code: '330122', name: '建德县' }
+  { code: '330114', name: '钱塘区' },
+  { code: '330122', name: '桐庐县' },
+  { code: '330127', name: '淳安县' },
+  { code: '330182', name: '建德市' }
 ]
 
 // 省份选择处理

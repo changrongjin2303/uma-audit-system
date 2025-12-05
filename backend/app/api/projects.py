@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional, Dict, Any
@@ -534,6 +534,8 @@ async def get_project_materials(
     limit: int = 100,
     is_matched: Optional[bool] = None,
     is_problematic: Optional[bool] = None,
+    keyword: Optional[str] = Query(None, description="材料名称/编码/规格关键词"),
+    unit: Optional[str] = Query(None, description="单位过滤"),
     # 开发环境暂时移除认证要求
     # # current_user: SimpleUser = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -557,12 +559,18 @@ async def get_project_materials(
     
     # 获取材料列表
     materials = await ProjectService.get_project_materials(
-        db, project_id, skip=calculated_skip, limit=calculated_limit,
-        is_matched=is_matched, is_problematic=is_problematic
+        db,
+        project_id,
+        skip=calculated_skip,
+        limit=calculated_limit,
+        is_matched=is_matched,
+        is_problematic=is_problematic,
+        keyword=keyword,
+        unit=unit
     )
     
     # 获取总数
-    from sqlalchemy import select, func, and_
+    from sqlalchemy import select, func, and_, or_
     from app.models.project import ProjectMaterial
     
     count_stmt = select(func.count(ProjectMaterial.id)).where(
@@ -574,6 +582,21 @@ async def get_project_materials(
         count_stmt = count_stmt.where(ProjectMaterial.is_matched == is_matched)
     if is_problematic is not None:
         count_stmt = count_stmt.where(ProjectMaterial.is_problematic == is_problematic)
+    
+    if keyword:
+        keyword_str = keyword.strip()
+        if keyword_str:
+            keyword_pattern = f"%{keyword_str}%"
+            count_stmt = count_stmt.where(
+                or_(
+                    ProjectMaterial.material_name.ilike(keyword_pattern),
+                    ProjectMaterial.serial_number.ilike(keyword_pattern),
+                    ProjectMaterial.specification.ilike(keyword_pattern)
+                )
+            )
+    
+    if unit:
+        count_stmt = count_stmt.where(ProjectMaterial.unit == unit)
     
     count_result = await db.execute(count_stmt)
     total = count_result.scalar() or 0

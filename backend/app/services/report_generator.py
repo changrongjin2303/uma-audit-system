@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pathlib import Path
 import json
 
@@ -22,9 +23,49 @@ import base64
 
 from app.core.config import settings
 from app.models.analysis import AuditReport
-from app.models.project import Project, ProjectMaterial
+from app.models.project import Project, ProjectMaterial, ProjectType
 from app.models.analysis import PriceAnalysis
+from app.models.user import User
 from loguru import logger
+
+
+PROVINCE_MAP = {
+    '110000': '北京市', '120000': '天津市', '130000': '河北省', '140000': '山西省',
+    '150000': '内蒙古自治区', '210000': '辽宁省', '220000': '吉林省', '230000': '黑龙江省',
+    '310000': '上海市', '320000': '江苏省', '330000': '浙江省', '340000': '安徽省',
+    '350000': '福建省', '360000': '江西省', '370000': '山东省', '410000': '河南省',
+    '420000': '湖北省', '430000': '湖南省', '440000': '广东省', '450000': '广西壮族自治区',
+    '460000': '海南省', '500000': '重庆市', '510000': '四川省', '520000': '贵州省',
+    '530000': '云南省', '540000': '西藏自治区', '610000': '陕西省', '620000': '甘肃省',
+    '630000': '青海省', '640000': '宁夏回族自治区', '650000': '新疆维吾尔自治区'
+}
+
+CITY_MAP = {
+    '110100': '北京市', '120100': '天津市', '130100': '石家庄市', '140100': '太原市',
+    '150100': '呼和浩特市', '210100': '沈阳市', '220100': '长春市', '230100': '哈尔滨市',
+    '310100': '上海市', '320100': '南京市', '330100': '杭州市', '340100': '合肥市',
+    '350100': '福州市', '360100': '南昌市', '370100': '济南市', '410100': '郑州市',
+    '420100': '武汉市', '430100': '长沙市', '440100': '广州市', '450100': '南宁市',
+    '460100': '海口市', '500100': '重庆市', '510100': '成都市', '520100': '贵阳市',
+    '530100': '昆明市', '540100': '拉萨市', '610100': '西安市', '620100': '兰州市',
+    '630100': '西宁市', '640100': '银川市', '650100': '乌鲁木齐市', '320500': '苏州市',
+    '330200': '宁波市', '440300': '深圳市'
+}
+
+DISTRICT_MAP = {
+    '330102': '上城区', '330104': '拱墅区', '330105': '西湖区', '330106': '滨江区',
+    '330107': '萧山区', '330108': '余杭区', '330109': '富阳区', '330110': '余杭区',
+    '330111': '富阳区', '330112': '临安区', '330113': '临平区', '330114': '钱塘区',
+    '330122': '桐庐县', '330127': '淳安县', '330182': '建德市', '330101': '上城区',
+    '330103': '江干区'
+}
+
+AUDIT_SCOPE_MAP = {
+    'price_analysis': '价格合理性分析',
+    'material_matching': '材料匹配度检查',
+    'market_comparison': '市场价格对比',
+    'risk_assessment': '风险评估'
+}
 
 
 class ReportGenerator:
@@ -67,6 +108,13 @@ class ReportGenerator:
             报告文件路径
         """
         try:
+            # 解析配置
+            config = report_config or {}
+            include_charts = config.get('include_charts', True)
+            include_details = config.get('include_detailed_analysis', True)
+            include_recommendations = config.get('include_recommendations', True)
+            include_appendices = config.get('include_appendices', True)
+
             # 生成报告数据
             report_data = await self._prepare_report_data(db, project, materials, analyses)
 
@@ -89,20 +137,23 @@ class ReportGenerator:
             self._add_methodology_section(doc, report_data)
 
             # 添加分析结果
-            await self._add_analysis_results(doc, report_data)
+            await self._add_analysis_results(doc, report_data, include_details=include_details)
 
             # 添加问题材料详情
             self._add_problematic_materials(doc, report_data)
 
             # 添加图表分析
-            chart_files = self._generate_charts(report_data)
-            self._add_charts_to_document(doc, chart_files)
+            if include_charts:
+                chart_files = self._generate_charts(report_data)
+                self._add_charts_to_document(doc, chart_files)
 
             # 添加建议措施
-            self._add_recommendations(doc, report_data)
+            if include_recommendations:
+                self._add_recommendations(doc, report_data)
 
             # 添加附录
-            self._add_appendices(doc, report_data)
+            if include_appendices:
+                self._add_appendices(doc, report_data)
 
             # 保存报告
             report_filename = f"audit_report_{project.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
@@ -172,6 +223,17 @@ class ReportGenerator:
                 if material.unit_price > analysis.predicted_price_avg:
                     savings = (material.unit_price - analysis.predicted_price_avg) * (material.quantity or 0)
                     estimated_savings += savings
+
+        # 获取创建人信息
+        creator_name = "未知"
+        if project.created_by:
+            try:
+                result = await db.execute(select(User).where(User.id == project.created_by))
+                user = result.scalar_one_or_none()
+                if user:
+                    creator_name = user.full_name or user.username
+            except Exception:
+                pass
 
         from app.services.report_service import ReportService
         report_service = ReportService()
@@ -245,6 +307,10 @@ class ReportGenerator:
                     'aiUnitPrice': guidance_unit,
                     'aiTotalPrice': guidance_total,
                     'adjustment': adjustment,
+                    # 新增字段，与前端 GuidancePriceMaterialTable 保持一致
+                    'originalBasePrice': float(item.get('original_base_price') or 0),
+                    'priceDiff': float(item.get('price_diff') or 0),
+                    'riskRate': float(item.get('risk_rate') or 0),
                     'weightPercentage': 0.0
                 })
 
@@ -314,7 +380,8 @@ class ReportGenerator:
             'price_analyses': price_analyses,
             'analysis_materials_report': analysis_materials_report,
             'guidance_materials_report': guidance_materials_report,
-            'top_adjustments': top_adjustments
+            'top_adjustments': top_adjustments,
+            'creator_name': creator_name
         }
 
     def _setup_document_styles(self, doc: Document):
@@ -369,6 +436,46 @@ class ReportGenerator:
         except Exception:
             pass
     
+    @staticmethod
+    def _resolve_region_name(code: str, map_data: Dict[str, str]) -> Optional[str]:
+        if not code:
+            return None
+        return map_data.get(code, code)
+
+    @staticmethod
+    def _format_year_month(value: Any) -> str:
+        if not value and value != 0:
+            return '未设置'
+        s = str(value).strip()
+        if not s:
+            return '未设置'
+        
+        # Replace '年' with '-' and remove '月'
+        normalized = s.replace('年', '-').replace('月', '')
+        normalized = normalized.replace('/', '-').replace('.', '-')
+        
+        parts = [p for p in normalized.split('-') if p]
+        year = None
+        month = None
+        
+        if len(parts) >= 2:
+            year, month = parts[0], parts[1]
+        elif len(normalized) == 6 and normalized.isdigit():
+            year, month = normalized[:4], normalized[4:]
+        elif len(normalized) == 4 and normalized.isdigit():
+            year = normalized
+            month = '01'
+        else:
+            return s
+            
+        try:
+            year_num = int(year)
+            month_num = int(month) if month else 1
+            month_num = max(1, min(12, month_num))
+            return f"{year_num}年{month_num:02d}月"
+        except ValueError:
+            return s
+
     def _add_title_page(self, doc: Document, data: Dict[str, Any]):
         """添加报告标题页"""
         project = data['project']
@@ -379,34 +486,112 @@ class ReportGenerator:
         
         doc.add_paragraph()
         
+        # 项目类型映射
+        project_type_map = {
+            'building': '建筑工程',
+            'decoration': '装饰工程',
+            'municipal': '市政工程',
+            'landscape': '园林工程',
+            'highway': '公路工程',
+            'other': '其他工程'
+        }
+        
+        project_type_str = project_type_map.get(project.project_type.value, '其他工程') if project.project_type else '未设置'
+        
+        # 地区拼接
+        province_name = self._resolve_region_name(project.base_price_province, PROVINCE_MAP)
+        city_name = self._resolve_region_name(project.base_price_city, CITY_MAP)
+        district_name = self._resolve_region_name(project.base_price_district, DISTRICT_MAP)
+        
+        region_parts = []
+        if province_name: region_parts.append(province_name)
+        if city_name: region_parts.append(city_name)
+        if district_name: region_parts.append(district_name)
+        
+        region = " ".join(region_parts) if region_parts else "未设置"
+        
+        # 工期拼接
+        period = "未设置"
+        start_date = self._format_year_month(project.contract_start_date)
+        end_date = self._format_year_month(project.contract_end_date)
+        
+        if start_date != '未设置' or end_date != '未设置':
+             period = f"{start_date} 至 {end_date}"
+            
+        # 分析范围处理
+        scope_str = "未设置"
+        if project.audit_scope:
+            if isinstance(project.audit_scope, list):
+                scope_parts = [AUDIT_SCOPE_MAP.get(s, s) for s in project.audit_scope]
+                scope_str = "、".join(scope_parts)
+            else:
+                scope_str = str(project.audit_scope)
+
         # 项目信息表
-        table = doc.add_table(rows=6, cols=2)
+        # 定义需要显示的字段
+        info_items = [
+            ('项目名称', project.name or ''),
+            ('项目编号', project.project_code or ''),
+            ('项目类型', project_type_str),
+            ('项目地点', project.location or ''),
+            ('业主单位', project.owner or ''),
+            ('承包单位', project.contractor or ''),
+            ('工程造价', f"{project.budget_amount:,.2f} 万元" if project.budget_amount else "未设置"),
+            ('基期信息价日期', self._format_year_month(project.base_price_date)),
+            ('合同工期', period),
+            ('基期信息价地区', region),
+            ('是否支持调价', "是" if project.support_price_adjustment else "否"),
+            ('调价范围', f"{project.price_adjustment_range}%" if project.price_adjustment_range is not None else "未设置"),
+            ('分析范围', scope_str),
+            ('创建时间', project.created_at.strftime('%Y-%m-%d %H:%M:%S') if project.created_at else "未知"),
+            ('创建人', data.get('creator_name', '未知')),
+            ('报告日期', data['report_date'].strftime('%Y年%m月%d日')),
+        ]
+
+        table = doc.add_table(rows=len(info_items), cols=2)
         table.style = 'Table Grid'
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         
-        cells = table.rows[0].cells
-        cells[0].text = '项目名称'
-        cells[1].text = project.name or ''
-        
-        cells = table.rows[1].cells
-        cells[0].text = '项目编号'
-        cells[1].text = project.project_code or ''
-        
-        cells = table.rows[2].cells
-        cells[0].text = '项目地点'
-        cells[1].text = project.location or ''
-        
-        cells = table.rows[3].cells
-        cells[0].text = '业主单位'
-        cells[1].text = project.owner or ''
-        
-        cells = table.rows[4].cells
-        cells[0].text = '承包单位'
-        cells[1].text = project.contractor or ''
-        
-        cells = table.rows[5].cells
-        cells[0].text = '报告日期'
-        cells[1].text = data['report_date'].strftime('%Y年%m月%d日')
+        for i, (label, value) in enumerate(info_items):
+            cells = table.rows[i].cells
+            cells[0].text = label
+            cells[1].text = str(value)
+            
+            # 设置单元格对齐和字体
+            for cell in cells:
+                # 垂直居中
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                # 段落设置
+                if cell.paragraphs:
+                    p = cell.paragraphs[0]
+                    # 设置行间距
+                    p.paragraph_format.line_spacing = Pt(18)
+                    p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.space_before = Pt(2)
+                    
+                    # 设置字体
+                    if p.runs:
+                        run = p.runs[0]
+                        self._set_east_asia_font(run, 'SimSun')
+                        run.font.size = Pt(10.5) # 五号字
+            
+            # 第一列使用黑体但不再加粗，避免过重
+            p = cells[0].paragraphs[0]
+            if p.runs:
+                run = p.runs[0]
+                run.bold = False
+                self._set_east_asia_font(run, 'SimHei')
+
+        # 项目描述 (如果有)
+        if project.description:
+            doc.add_paragraph() # 空行
+            desc_title = doc.add_paragraph()
+            desc_title.add_run("项目描述：").bold = True
+            self._set_east_asia_font(desc_title.runs[0], 'SimHei')
+            
+            desc_content = doc.add_paragraph(project.description)
+            if desc_content.runs:
+                self._set_east_asia_font(desc_content.runs[0], 'SimSun')
         
         doc.add_page_break()
     
@@ -535,7 +720,7 @@ class ReportGenerator:
 
         doc.add_paragraph()
 
-    async def _add_analysis_results(self, doc: Document, data: Dict[str, Any]):
+    async def _add_analysis_results(self, doc: Document, data: Dict[str, Any], include_details: bool = True):
         """添加分析结果"""
         doc.add_heading('分析结果', 1)
         
@@ -585,28 +770,48 @@ class ReportGenerator:
 
         doc.add_paragraph()
 
-        # 生成表1：材料价格分析表（无信息价材料）
-        if analysis_materials:
-            self.create_standard_material_table(
-                doc, 
-                "表1 材料价格分析表（无信息价材料）", 
-                analysis_materials,
-                "analysis",
-                project.name or "未命名项目"
-            )
+        if include_details:
+            # 生成表1：材料价格分析表（无信息价材料）
+            if analysis_materials:
+                # 筛选核增（减）额为正数的数据（即送审价 > AI价，核减）
+                filtered_materials = [
+                    m for m in analysis_materials
+                    if m.get('adjustment', 0) > 0
+                ]
+                # 按权重百分比降序排序（权重高的材料排在前面）
+                filtered_materials.sort(
+                    key=lambda x: x.get('weightPercentage', 0),
+                    reverse=True
+                )
+                # 下载的报告仅展示权重最高的前15条记录
+                filtered_materials = filtered_materials[:15]
 
-        # 生成表2：材料价格分析表（市场信息价材料）
-        if guidance_materials:
-            self.create_standard_material_table(
-                doc, 
-                "表2 材料价格分析表（市场信息价材料）", 
-                guidance_materials,  # 显示所有数据
-                "guidance_price",
-                project.name or "未命名项目"
-            )
-        elif not guidance_materials:
-            # 如果没有市场信息价材料，显示提示信息
-            doc.add_paragraph("暂无市场信息价材料数据")
+                if filtered_materials:
+                    self.create_standard_material_table(
+                        doc, 
+                        "表1 材料价格分析表（无信息价材料）", 
+                        filtered_materials,
+                        "analysis",
+                        project.name or "未命名项目"
+                    )
+                else:
+                    p = doc.add_paragraph("表1：未发现正向核增（减）材料（无核减项）。")
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            # 生成表2：材料价格分析表（市场信息价材料）
+            if guidance_materials:
+                self.create_standard_material_table(
+                    doc, 
+                    "表2 材料价格分析表（市场信息价材料）", 
+                    guidance_materials,  # 显示所有数据
+                    "guidance_price",
+                    project.name or "未命名项目"
+                )
+            elif not guidance_materials:
+                # 如果没有市场信息价材料，显示提示信息
+                doc.add_paragraph("暂无市场信息价材料数据")
+        else:
+            doc.add_paragraph("（详细清单已省略，请查看摘要或选择生成完整报告）")
         
         # 风险等级分布摘要
         doc.add_heading('风险等级分布', 2)
@@ -713,7 +918,18 @@ class ReportGenerator:
             chart_path = self._create_total_comparison_chart(data)
             if chart_path:
                 chart_files.append(chart_path)
-                
+
+            # 新增：价格偏差分析图（如果有分析结果）
+            chart_path = self._create_price_variance_chart(data)
+            if chart_path:
+                chart_files.append(chart_path)
+
+            # 如果以上图表都没有生成（例如项目数据较少），生成一张占位说明图
+            if not chart_files:
+                chart_path = self._create_no_data_chart()
+                if chart_path:
+                    chart_files.append(chart_path)
+
         except Exception as e:
             logger.error(f"生成图表失败: {e}")
         
@@ -884,6 +1100,28 @@ class ReportGenerator:
         plt.close()
         
         return str(chart_path)
+
+    def _create_no_data_chart(self) -> Optional[str]:
+        """当没有可用数据时生成占位图，避免文档中图表区域完全空白"""
+        try:
+            plt.figure(figsize=(8, 4))
+            plt.axis('off')
+            plt.text(
+                0.5,
+                0.5,
+                '当前项目暂无可展示的图表数据\n（无风险材料或差异为 0）',
+                ha='center',
+                va='center',
+                fontsize=14
+            )
+            chart_filename = f"no_data_{uuid.uuid4().hex[:8]}.png"
+            chart_path = self.reports_dir / chart_filename
+            plt.savefig(chart_path, dpi=200, bbox_inches='tight')
+            plt.close()
+            return str(chart_path)
+        except Exception as e:
+            logger.error(f"生成占位图失败: {e}")
+            return None
     
     def _add_charts_to_document(self, doc: Document, chart_files: List[str]):
         """将图表添加到文档中"""
@@ -1069,146 +1307,275 @@ class ReportGenerator:
         run3.font.name = 'SimSun'
         run3.font.size = Pt(10)
         
-        # 创建表格 - 基础列数
-        base_cols = 11  # 序号、材料名称、规格型号、单位、数量、送审结算(单价/合价)、AI辅助审核(单价/合价)、核增减额、权重
-        
-        # 创建表格
-        table = doc.add_table(rows=2, cols=base_cols)
-        table.style = 'Table Grid'
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        
-        # 设置表格边框样式（全边框）
-        from docx.oxml.ns import nsdecls
-        from docx.oxml import parse_xml
-        
-        tbl = table._tbl
-        tblPr = tbl.tblPr
-        tblBorders = parse_xml(r'<w:tblBorders {}>'
-                              r'<w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                              r'<w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                              r'<w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                              r'<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                              r'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                              r'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
-                              r'</w:tblBorders>'.format(nsdecls('w')))
-        tblPr.append(tblBorders)
-        
-        # 设置列宽（适应横向页面）
-        widths = [Cm(1.0), Cm(3.0), Cm(2.5), Cm(1.0), Cm(1.5), Cm(1.8), Cm(1.8), Cm(1.8), Cm(1.8), Cm(2.0), Cm(1.5)]
-        for i, width in enumerate(widths[:base_cols]):
-            for row in table.rows:
-                if i < len(row.cells):
-                    row.cells[i].width = width
-        
-        # 设置表头 - 第一行
-        header_row1 = table.rows[0]
+        # 根据表类型分别构建列结构
         if table_type == "guidance_price":
-            headers1 = ['序号', '材料名称', '规格型号', '单位', '数量', '送审结算', '', '市场信息价结算', '', '核增（减）额', '权重（%）']
-        else:
-            headers1 = ['序号', '材料名称', '规格型号', '单位', '数量', '送审结算', '', 'AI 辅助审核', '', '核增（减）额', '权重（%）']
-        
-        for i, header in enumerate(headers1[:base_cols]):
-            if header:  # 跳过空的合并单元格
-                cell = header_row1.cells[i]
-                cell.text = header
-                cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                
-                # 设置表头字体为黑体
-                run = cell.paragraphs[0].runs[0]
-                run.font.name = 'SimHei'  # 黑体
-                run.font.size = Pt(9)
-                run.bold = True
-        
-        # 合并第一行的多级表头
-        self._merge_cells_horizontally(table, 0, 5, 6)  # 合并"送审结算"(单价+合价)
-        self._merge_cells_horizontally(table, 0, 7, 8)  # 合并"AI辅助审核"或"市场信息价结算"(单价+合价)
-        
-        # 设置表头 - 第二行
-        header_row2 = table.rows[1]
-        headers2 = ['', '', '', '', '', '单价', '合价', '单价', '合价', '', '']
-        
-        for i, header in enumerate(headers2[:base_cols]):
-            if header:  # 只设置有内容的单元格
-                cell = header_row2.cells[i]
-                cell.text = header
-                cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                
-                # 设置表头字体为黑体
-                run = cell.paragraphs[0].runs[0]
-                run.font.name = 'SimHei'  # 黑体
-                run.font.size = Pt(8)
-                run.bold = True
-        
-        # 合并第二行不需要子表头的列（将第一行和第二行合并）
-        cols_to_merge = [0, 1, 2, 3, 4, 9, 10]  # 序号、材料名称、规格型号、单位、数量、核增减额、权重
-        for col_idx in cols_to_merge:
-            if col_idx < base_cols:
-                try:
-                    table.cell(0, col_idx).merge(table.cell(1, col_idx))
-                except Exception:
-                    pass  # 忽略合并错误
-        
-        # 添加数据行
-        for idx, material in enumerate(materials_data):
-            row = table.add_row()
-            
-            # 填充数据
-            data_cells = [
-                str(idx + 1),  # 序号
-                material.get('materialName', ''),  # 材料名称
-                material.get('specification', ''),  # 规格型号
-                material.get('unit', ''),  # 单位
-                f"{material.get('quantity', 0):,.0f}",  # 数量
-                f"{material.get('originalUnitPrice', 0):,.2f}",  # 送审单价
-                f"{material.get('originalTotalPrice', 0):,.2f}",  # 送审合价
-                f"{material.get('aiUnitPrice', 0):,.2f}",  # AI单价
-                f"{material.get('aiTotalPrice', 0):,.2f}",  # AI合价
-                f"{material.get('adjustment', 0):+,.2f}",  # 核增减额
-                f"{material.get('weightPercentage', 0):.2f}"  # 权重
+            # ==================== 市场信息价材料表结构 ====================
+            # 列：序号、材料名称、规格型号、单位、数量、
+            #     送审结算(单价/合价)、市场信息价结算(基期信息价/价格差异/合同期平均价/风险幅度)、
+            #     调差、权重（%）
+            base_cols = 13
+            table = doc.add_table(rows=2, cols=base_cols)
+            table.style = 'Table Grid'
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            from docx.oxml.ns import nsdecls
+            from docx.oxml import parse_xml
+
+            tbl = table._tbl
+            tblPr = tbl.tblPr
+            tblBorders = parse_xml(
+                r'<w:tblBorders {}>'
+                r'<w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'</w:tblBorders>'.format(nsdecls('w'))
+            )
+            tblPr.append(tblBorders)
+
+            widths = [
+                Cm(1.0),  # 序号
+                Cm(3.0),  # 材料名称
+                Cm(2.5),  # 规格型号
+                Cm(1.0),  # 单位
+                Cm(1.5),  # 数量
+                Cm(1.8),  # 送审单价
+                Cm(1.8),  # 送审合价
+                Cm(1.8),  # 基期信息价
+                Cm(1.8),  # 价格差异
+                Cm(1.8),  # 合同期平均价
+                Cm(1.8),  # 风险幅度
+                Cm(2.0),  # 调差
+                Cm(1.5),  # 权重
             ]
-            
-            for j, data in enumerate(data_cells[:base_cols]):
-                cell = row.cells[j]
+            for i, width in enumerate(widths[:base_cols]):
+                for row in table.rows:
+                    if i < len(row.cells):
+                        row.cells[i].width = width
+
+            # 第一行表头
+            header_row1 = table.rows[0]
+            headers1 = [
+                '序号', '材料名称', '规格型号', '单位', '数量',
+                '送审结算', '',
+                '市场信息价结算', '', '', '',
+                '调差', '权重（%）'
+            ]
+            for i, header in enumerate(headers1[:base_cols]):
+                if header:
+                    cell = header_row1.cells[i]
+                    cell.text = header
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'SimHei'
+                    run.font.size = Pt(9)
+                    run.bold = True
+
+            # 合并第一行多级表头
+            self._merge_cells_horizontally(table, 0, 5, 6)   # 送审结算
+            self._merge_cells_horizontally(table, 0, 7, 10)  # 市场信息价结算
+
+            # 第二行表头
+            header_row2 = table.rows[1]
+            headers2 = [
+                '', '', '', '', '',
+                '单价', '合价',
+                '基期信息价', '价格差异', '合同期平均价', '风险幅度',
+                '', ''
+            ]
+            for i, header in enumerate(headers2[:base_cols]):
+                if header:
+                    cell = header_row2.cells[i]
+                    cell.text = header
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'SimHei'
+                    run.font.size = Pt(8)
+                    run.bold = True
+
+            # 合并无需子表头的列（首行和次行）
+            cols_to_merge = [0, 1, 2, 3, 4, 11, 12]
+            for col_idx in cols_to_merge:
+                if col_idx < base_cols:
+                    try:
+                        table.cell(0, col_idx).merge(table.cell(1, col_idx))
+                    except Exception:
+                        pass
+
+            # 数据行
+            for idx, material in enumerate(materials_data):
+                row = table.add_row()
+                data_cells = [
+                    str(idx + 1),
+                    material.get('materialName', ''),
+                    material.get('specification', ''),
+                    material.get('unit', ''),
+                    f"{material.get('quantity', 0):,.0f}",
+                    f"{material.get('originalUnitPrice', 0):,.4f}",
+                    f"{material.get('originalTotalPrice', 0):,.2f}",
+                    f"{material.get('originalBasePrice', 0):,.4f}",
+                    f"{material.get('priceDiff', 0):+,.4f}",
+                    f"{material.get('aiUnitPrice', 0):,.4f}",
+                    f"{material.get('riskRate', 0):.2f}%",
+                    f"{material.get('adjustment', 0):+,.2f}",
+                    f"{material.get('weightPercentage', 0):.2f}",
+                ]
+                for j, data in enumerate(data_cells[:base_cols]):
+                    cell = row.cells[j]
+                    cell.text = data
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'SimSun'
+                    run.font.size = Pt(8)
+
+            # 合计行
+            summary_row = table.add_row()
+            summary_data = ['',
+                            '合计', '', '', '',
+                            '', '', '', '', '',
+                            '',
+                            '', '']
+
+            total_original = sum(m.get('originalTotalPrice', 0) for m in materials_data)
+            total_guidance = sum(m.get('aiTotalPrice', 0) for m in materials_data)
+            total_adjustment = sum(m.get('adjustment', 0) for m in materials_data)
+            total_weight = sum(m.get('weightPercentage', 0) for m in materials_data)
+
+            summary_data[6] = f"{total_original:,.2f}"       # 送审合价合计
+            summary_data[9] = f"{total_guidance:,.2f}"       # 合同期平均价合计
+            summary_data[11] = f"{total_adjustment:+,.2f}"   # 调差合计
+            summary_data[12] = f"{total_weight:.2f}"         # 权重合计
+
+            for j, data in enumerate(summary_data[:base_cols]):
+                cell = summary_row.cells[j]
                 cell.text = data
                 cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                
-                # 设置字体
                 run = cell.paragraphs[0].runs[0]
-                run.font.name = 'SimSun'  # 宋体
+                run.font.name = 'SimSun'
                 run.font.size = Pt(8)
-        
-        # 添加合计行
-        summary_row = table.add_row()
-        summary_data = ['', '合计', '', '', '', '', '', '', '', '', '']
-        
-        # 计算合计
-        total_original = sum(m.get('originalTotalPrice', 0) for m in materials_data)
-        total_ai = sum(m.get('aiTotalPrice', 0) for m in materials_data)
-        total_adjustment = sum(m.get('adjustment', 0) for m in materials_data)
-        total_weight = sum(m.get('weightPercentage', 0) for m in materials_data)
-        
-        summary_data[6] = f"{total_original:,.2f}"  # 送审合价合计
-        summary_data[8] = f"{total_ai:,.2f}"  # AI合价合计
-        summary_data[9] = f"{total_adjustment:+,.2f}"  # 核增减额合计
-        summary_data[10] = f"{total_weight:.2f}"  # 权重合计
-        
-        for j, data in enumerate(summary_data[:base_cols]):
-            cell = summary_row.cells[j]
-            cell.text = data
-            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-            
-            # 设置字体
-            run = cell.paragraphs[0].runs[0]
-            run.font.name = 'SimSun'  # 宋体
-            run.font.size = Pt(8)
-            run.bold = True
-        
-        # 设置表格边框
-        self._set_table_borders(table)
+                run.bold = True
+
+        else:
+            # ==================== 无信息价材料表结构（原逻辑） ====================
+            base_cols = 11  # 序号、材料名称、规格型号、单位、数量、送审结算(单价/合价)、AI辅助审核(单价/合价)、核增减额、权重
+            table = doc.add_table(rows=2, cols=base_cols)
+            table.style = 'Table Grid'
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            from docx.oxml.ns import nsdecls
+            from docx.oxml import parse_xml
+
+            tbl = table._tbl
+            tblPr = tbl.tblPr
+            tblBorders = parse_xml(
+                r'<w:tblBorders {}>'
+                r'<w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                r'</w:tblBorders>'.format(nsdecls('w'))
+            )
+            tblPr.append(tblBorders)
+
+            widths = [Cm(1.0), Cm(3.0), Cm(2.5), Cm(1.0), Cm(1.5),
+                      Cm(1.8), Cm(1.8), Cm(1.8), Cm(1.8), Cm(2.0), Cm(1.5)]
+            for i, width in enumerate(widths[:base_cols]):
+                for row in table.rows:
+                    if i < len(row.cells):
+                        row.cells[i].width = width
+
+            header_row1 = table.rows[0]
+            headers1 = ['序号', '材料名称', '规格型号', '单位', '数量',
+                        '送审结算', '', 'AI 辅助审核', '', '核增（减）额', '权重（%）']
+            for i, header in enumerate(headers1[:base_cols]):
+                if header:
+                    cell = header_row1.cells[i]
+                    cell.text = header
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'SimHei'
+                    run.font.size = Pt(9)
+                    run.bold = True
+
+            self._merge_cells_horizontally(table, 0, 5, 6)
+            self._merge_cells_horizontally(table, 0, 7, 8)
+
+            header_row2 = table.rows[1]
+            headers2 = ['', '', '', '', '', '单价', '合价', '单价', '合价', '', '']
+            for i, header in enumerate(headers2[:base_cols]):
+                if header:
+                    cell = header_row2.cells[i]
+                    cell.text = header
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'SimHei'
+                    run.font.size = Pt(8)
+                    run.bold = True
+
+            cols_to_merge = [0, 1, 2, 3, 4, 9, 10]
+            for col_idx in cols_to_merge:
+                if col_idx < base_cols:
+                    try:
+                        table.cell(0, col_idx).merge(table.cell(1, col_idx))
+                    except Exception:
+                        pass
+
+            for idx, material in enumerate(materials_data):
+                row = table.add_row()
+                data_cells = [
+                    str(idx + 1),
+                    material.get('materialName', ''),
+                    material.get('specification', ''),
+                    material.get('unit', ''),
+                    f"{material.get('quantity', 0):,.0f}",
+                    f"{material.get('originalUnitPrice', 0):,.2f}",
+                    f"{material.get('originalTotalPrice', 0):,.2f}",
+                    f"{material.get('aiUnitPrice', 0):,.2f}",
+                    f"{material.get('aiTotalPrice', 0):,.2f}",
+                    f"{material.get('adjustment', 0):+,.2f}",
+                    f"{material.get('weightPercentage', 0):.2f}",
+                ]
+                for j, data in enumerate(data_cells[:base_cols]):
+                    cell = row.cells[j]
+                    cell.text = data
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                    run = cell.paragraphs[0].runs[0]
+                    run.font.name = 'SimSun'
+                    run.font.size = Pt(8)
+
+            summary_row = table.add_row()
+            summary_data = ['', '合计', '', '', '', '', '', '', '', '', '']
+
+            total_original = sum(m.get('originalTotalPrice', 0) for m in materials_data)
+            total_ai = sum(m.get('aiTotalPrice', 0) for m in materials_data)
+            total_adjustment = sum(m.get('adjustment', 0) for m in materials_data)
+            total_weight = sum(m.get('weightPercentage', 0) for m in materials_data)
+
+            summary_data[6] = f"{total_original:,.2f}"
+            summary_data[8] = f"{total_ai:,.2f}"
+            summary_data[9] = f"{total_adjustment:+,.2f}"
+            summary_data[10] = f"{total_weight:.2f}"
+
+            for j, data in enumerate(summary_data[:base_cols]):
+                cell = summary_row.cells[j]
+                cell.text = data
+                cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                run = cell.paragraphs[0].runs[0]
+                run.font.name = 'SimSun'
+                run.font.size = Pt(8)
+                run.bold = True
         
         # 添加备注
         notes = doc.add_paragraph()

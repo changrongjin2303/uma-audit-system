@@ -109,6 +109,11 @@
       <!-- 批量操作工具栏 -->
       <div class="table-toolbar">
         <div class="toolbar-left">
+          <el-radio-group v-model="viewMode" size="small" style="margin-right: 16px;">
+            <el-radio-button label="grouped">按期数折叠</el-radio-button>
+            <el-radio-button label="flat">平铺列表</el-radio-button>
+          </el-radio-group>
+          
           <template v-if="selectedCount > 0">
             <el-button type="danger" :icon="Delete" @click="handleBatchDelete">
               批量删除 ({{ selectedCount }})
@@ -134,8 +139,67 @@
         </div>
       </div>
 
-      <!-- 材料表格 -->
+      <!-- 期数分组表格 -->
       <el-table
+        v-if="viewMode === 'grouped'"
+        v-loading="loading"
+        :data="filteredPeriods"
+        style="width: 100%"
+        class="periods-table"
+        :height="tableHeight"
+        :row-key="(row) => `${row.price_date}-${row.region}-${row.price_type}`"
+      >
+        <el-table-column type="expand" width="50">
+            <template #default="{ row }">
+                <div class="expanded-table-container">
+                    <period-material-list 
+                        :period="row" 
+                        @view="viewMaterial"
+                        @edit="editMaterial"
+                        @refresh-parent="fetchPeriods" 
+                    />
+                </div>
+            </template>
+        </el-table-column>
+        <el-table-column prop="price_date" label="期数" min-width="200" sortable>
+           <template #default="{ row }">
+             <span style="font-weight: bold; font-size: 15px;">{{ row.price_date }}</span>
+           </template>
+        </el-table-column>
+        <el-table-column prop="region" label="地区" min-width="250">
+            <template #default="{ row }">
+                <span style="font-size: 14px;">{{ getApplicableRegionText(row) }}</span>
+            </template>
+        </el-table-column>
+        <el-table-column prop="price_type" label="类型" min-width="200">
+             <template #default="{ row }">
+                <el-tag :type="getJournalType(row)" size="default">{{ getJournalText(row) }}</el-tag>
+             </template>
+        </el-table-column>
+        <el-table-column prop="count" label="材料数量" min-width="200" sortable>
+          <template #default="{ row }">
+            <el-tag type="info" size="default">{{ row.count }} 条</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <div class="action-buttons">
+              <el-button
+                type="danger"
+                size="small"
+                :icon="Delete"
+                @click="deletePeriodData(row)"
+              >
+                删除
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 材料表格 (Flat) -->
+      <el-table
+        v-else
         ref="materialTableRef"
         v-loading="loading"
         :data="materials"
@@ -231,7 +295,7 @@
       </el-table>
 
       <!-- 分页 -->
-      <div v-if="materials.length > 0" class="pagination-wrapper">
+      <div v-if="viewMode === 'flat' && materials.length > 0" class="pagination-wrapper">
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
@@ -246,7 +310,7 @@
       </div>
       
       <!-- 空状态 -->
-      <el-empty v-else description="暂无材料数据">
+      <el-empty v-if="!loading && ((viewMode === 'flat' && materials.length === 0) || (viewMode === 'grouped' && filteredPeriods.length === 0))" description="暂无材料数据">
         <el-button type="primary" @click="$router.push('/materials/import')">
           导入材料数据
         </el-button>
@@ -458,7 +522,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onActivated, watch, nextTick } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter, useRoute } from 'vue-router'
 import {
   Plus,
@@ -472,14 +536,34 @@ import {
   UploadFilled
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
-import { getBaseMaterials, createBaseMaterial, updateBaseMaterial, deleteBaseMaterial, batchDeleteBaseMaterials, getRegions, searchSimilarBaseMaterials } from '@/api/materials'
+import { getBaseMaterials, createBaseMaterial, updateBaseMaterial, deleteBaseMaterial, batchDeleteBaseMaterials, getRegions, searchSimilarBaseMaterials, getMaterialPeriods, deleteMaterialsByPeriod } from '@/api/materials'
 import { useSelectionAcrossPages } from '@/composables/useSelectionAcrossPages'
+import PeriodMaterialList from './components/PeriodMaterialList.vue'
 
 // 使用路由
 const router = useRouter()
 const route = useRoute()
 
 // 响应式数据
+const viewMode = ref('grouped') // 'grouped' | 'flat'
+const periods = ref([])
+const filteredPeriods = computed(() => {
+  return periods.value.filter(p => {
+    if (searchForm.price_type && p.price_type !== searchForm.price_type) return false
+    
+    if (searchForm.region) {
+       // Check if any location field matches the search region
+       const match = p.region === searchForm.region || 
+                     p.province === searchForm.region || 
+                     p.city === searchForm.region
+       if (!match) return false
+    }
+    
+    if (searchForm.price_date && p.price_date !== searchForm.price_date) return false
+    
+    return true
+  })
+})
 const loading = ref(false)
 const submitting = ref(false)
 const importing = ref(false)
@@ -708,6 +792,22 @@ const fetchMaterials = async () => {
   }
 }
 
+const fetchPeriods = async () => {
+  loading.value = true
+  try {
+    const res = await getMaterialPeriods()
+    const data = res.data?.data || res.data || res
+    // data可能是数组，也可能是{periods: [...]}格式
+    periods.value = Array.isArray(data) ? data : (data.periods || [])
+    console.log('获取到期数列表:', periods.value.length, '条')
+  } catch (error) {
+    console.error('获取期数列表失败', error)
+    ElMessage.error('获取期数列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 // 状态相关方法
 const getCategoryType = (category) => {
   const typeMap = {
@@ -837,23 +937,102 @@ const getRegionText = (region) => {
     return region
   }
 
-  // 英文代码到中文的映射
+  // 英文代码到中文的映射（包含省市和区县）
   const textMap = {
+    // 直辖市
     'beijing': '北京市',
     'shanghai': '上海市',
+    'tianjin': '天津市',
+    'chongqing': '重庆市',
+    
+    // 省份
+    'zhejiang': '浙江省',
+    'jiangsu': '江苏省',
+    'guangdong': '广东省',
+    'shandong': '山东省',
+    'sichuan': '四川省',
+    'hubei': '湖北省',
+    'hunan': '湖南省',
+    'henan': '河南省',
+    'hebei': '河北省',
+    'anhui': '安徽省',
+    'fujian': '福建省',
+    'jiangxi': '江西省',
+    'liaoning': '辽宁省',
+    'jilin': '吉林省',
+    'heilongjiang': '黑龙江省',
+    'shanxi': '山西省',
+    'shaanxi': '陕西省',
+    'yunnan': '云南省',
+    'guizhou': '贵州省',
+    'hainan': '海南省',
+    'gansu': '甘肃省',
+    'qinghai': '青海省',
+    'xinjiang': '新疆维吾尔自治区',
+    'ningxia': '宁夏回族自治区',
+    'guangxi': '广西壮族自治区',
+    'neimenggu': '内蒙古自治区',
+    'xizang': '西藏自治区',
+    
+    // 主要城市
+    'hangzhou': '杭州市',
+    'ningbo': '宁波市',
+    'wenzhou': '温州市',
+    'shaoxing': '绍兴市',
+    'jiaxing': '嘉兴市',
+    'huzhou': '湖州市',
+    'jinhua': '金华市',
+    'quzhou': '衢州市',
+    'taizhou': '台州市',
+    'lishui': '丽水市',
+    'zhoushan': '舟山市',
     'guangzhou': '广州市',
     'shenzhen': '深圳市',
-    'hangzhou': '杭州市',
+    'dongguan': '东莞市',
+    'foshan': '佛山市',
+    'huizhou': '惠州市',
+    'zhongshan': '中山市',
+    'zhuhai': '珠海市',
+    'jiangmen': '江门市',
     'nanjing': '南京市',
     'suzhou': '苏州市',
     'wuxi': '无锡市',
-    'national': '全国',
-    'zhejiang': '浙江省',
-    'jiangsu': '江苏省',
-    'guangdong': '广东省'
+    'changzhou': '常州市',
+    'nantong': '南通市',
+    'yangzhou': '扬州市',
+    'xuzhou': '徐州市',
+    'jinan': '济南市',
+    'qingdao': '青岛市',
+    'yantai': '烟台市',
+    'weifang': '潍坊市',
+    'zibo': '淄博市',
+    'jining': '济宁市',
+    
+    // 其他
+    'national': '全国'
   }
 
-  return textMap[region] || region
+  // 处理组合格式，例如 "hangzhou 临平区" 转换为 "杭州市 临平区"
+  const regionLower = region.toLowerCase()
+  
+  // 检查是否包含空格（组合格式）
+  if (region.includes(' ')) {
+    const parts = region.split(' ')
+    const cityCode = parts[0].toLowerCase()
+    const district = parts.slice(1).join(' ')
+    
+    // 转换城市代码为中文
+    const cityName = textMap[cityCode]
+    if (cityName) {
+      // 如果区县部分已经是中文，直接拼接
+      if (/[\u4e00-\u9fa5]/.test(district)) {
+        return `${cityName} ${district}`
+      }
+    }
+  }
+  
+  // 单独的代码转换
+  return textMap[regionLower] || region
 }
 
 // 省份代码到中文的映射
@@ -927,7 +1106,19 @@ const getSourceText = (source) => {
 // 搜索和重置
 const handleSearch = () => {
   pagination.page = 1
-  fetchMaterials()
+  if ((searchForm.name && searchForm.name.trim()) || (searchForm.specification && searchForm.specification.trim())) {
+    if (viewMode.value !== 'flat') {
+      viewMode.value = 'flat'
+    } else {
+      fetchMaterials()
+    }
+  } else {
+    if (viewMode.value === 'grouped') {
+      fetchPeriods()
+    } else {
+      fetchMaterials()
+    }
+  }
 }
 
 const handleReset = () => {
@@ -940,7 +1131,12 @@ const handleReset = () => {
   })
   specOptions.value = []
   pagination.page = 1
-  fetchMaterials()
+  
+  if (viewMode.value === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
 }
 
 // 分页处理
@@ -1142,12 +1338,13 @@ const handleMaterialSubmit = async () => {
 const handleBatchDelete = async () => {
   try {
     await ElMessageBox.confirm(
-      `确定要删除已选择的 ${selectedCount.value} 个材料吗？`,
+      `确定要删除已选择的 ${selectedCount.value} 个材料吗？删除后数据无法恢复！`,
       '批量删除确认',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        distinguishCancelAndClose: true
       }
     )
     
@@ -1175,20 +1372,28 @@ const handleBatchDelete = async () => {
       return ids
     }
 
-    loading.value = true
-    const ids = await getSelectedIds(fetchAllIds)
-    await batchDeleteBaseMaterials(ids)
+    // 使用全局loading替代表格loading，避免频闪
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: `正在删除 ${selectedCount.value} 个材料，请稍候...`,
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
     
-    ElMessage.success(`成功删除 ${ids.length} 个材料`)
-    clearAllSelection()
-    fetchMaterials()
+    try {
+      const ids = await getSelectedIds(fetchAllIds)
+      await batchDeleteBaseMaterials(ids)
+      
+      ElMessage.success(`成功删除 ${ids.length} 个材料`)
+      clearAllSelection()
+      await fetchMaterials()
+    } finally {
+      loadingInstance.close()
+    }
   } catch (error) {
     if (error !== 'cancel') {
       console.error('批量删除失败:', error)
       ElMessage.error('批量删除失败: ' + (error.message || '未知错误'))
     }
-  } finally {
-    loading.value = false
   }
 }
 
@@ -1198,6 +1403,76 @@ const handleBatchEdit = () => {
 
 const handleExport = () => {
   ElMessage.info('导出功能开发中...')
+}
+
+// 删除期数所有数据
+const deletePeriodData = async (period) => {
+  try {
+    const periodText = `${period.price_date} - ${getApplicableRegionText(period)} - ${getJournalText(period)}`
+    
+    await ElMessageBox.confirm(
+      `确定要删除期数 "${periodText}" 下的所有 ${period.count} 条材料数据吗？删除后数据无法恢复！`,
+      '删除整个期数数据',
+      {
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        distinguishCancelAndClose: true
+      }
+    )
+    
+    // 使用全局loading
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: `正在删除期数 ${period.price_date} 下的 ${period.count} 条材料数据，请稍候...`,
+      background: 'rgba(0, 0, 0, 0.7)'
+    })
+    
+    try {
+      const normalizeValue = (value) => {
+        if (!value) return null
+        if (typeof value === 'object') {
+          if (value.value) return String(value.value)
+          if (value.label) return String(value.label)
+        }
+        const str = String(value).trim()
+        if (!str || str.toLowerCase() === 'none') return null
+        return str.split(':')[0]
+      }
+
+      const payload = {
+        price_date: period.price_date && period.price_date !== 'None' ? period.price_date : null,
+        price_type: period.price_type || null,
+        region: normalizeValue(period.region),
+        province: normalizeValue(period.province),
+        city: normalizeValue(period.city)
+      }
+
+      const response = await deleteMaterialsByPeriod(payload)
+      const result = response.data?.data || response.data || {}
+      const deletedCount = result.deleted_count ?? result.matched_count ?? 0
+
+      if (deletedCount === 0) {
+        ElMessage.warning('未找到要删除的材料数据')
+      } else {
+        ElMessage.success(`成功删除期数 ${period.price_date} 下的 ${deletedCount} 条材料数据`)
+      }
+
+      await fetchPeriods()
+    } catch (apiError) {
+      console.error('API调用错误:', apiError)
+      console.error('错误详情:', apiError.response?.data)
+      throw apiError
+    } finally {
+      loadingInstance.close()
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除期数数据失败:', error)
+      const errorMsg = error.response?.data?.detail || error.message || '未知错误'
+      ElMessage.error('删除失败: ' + errorMsg)
+    }
+  }
 }
 
 // 获取可用地区选项
@@ -1251,12 +1526,28 @@ const getRegionDisplayText = (region, priceType) => {
 // 生命周期
 onMounted(() => {
   fetchAvailableRegions() // 先获取地区选项
-  fetchMaterials()
+  if (viewMode.value === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
+})
+
+watch(viewMode, (newMode) => {
+  if (newMode === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
 })
 
 // 页面激活时重新获取数据（解决从其他页面跳转过来时数据不更新的问题）
 onActivated(() => {
-  fetchMaterials()
+  if (viewMode.value === 'grouped') {
+    fetchPeriods()
+  } else {
+    fetchMaterials()
+  }
 })
 
 // 监听路由变化，确保每次进入页面都刷新数据
@@ -1264,7 +1555,11 @@ watch(() => route.path, (newPath) => {
   // 当路由变化且当前页面是基准材料页面时，刷新数据
   if (newPath === '/materials/base' || newPath.includes('/materials/base')) {
     console.log('路由切换到基准材料页面，刷新数据')
-    fetchMaterials()
+    if (viewMode.value === 'grouped') {
+      fetchPeriods()
+    } else {
+      fetchMaterials()
+    }
   }
 })
 
@@ -1302,6 +1597,48 @@ const tableHeight = computed(() => {
 </script>
 
 <style lang="scss" scoped>
+.expanded-table-container {
+    padding: 10px 20px;
+    background-color: #f8f9fa;
+}
+
+// 期数表格样式优化
+.periods-table {
+  :deep(.el-table__header) {
+    th {
+      background-color: #f5f7fa;
+      color: #606266;
+      font-weight: 600;
+      font-size: 14px;
+    }
+  }
+  
+  :deep(.el-table__row) {
+    &:hover {
+      background-color: #f5f7fa;
+    }
+    
+    td {
+      padding: 16px 0;
+      font-size: 14px;
+      
+      .cell {
+        display: flex;
+        align-items: center;
+      }
+    }
+  }
+  
+  :deep(.el-table__expand-icon) {
+    font-size: 14px;
+    color: #409eff;
+    
+    &.el-table__expand-icon--expanded {
+      transform: rotate(90deg);
+    }
+  }
+}
+
 .base-materials-container {
   min-height: calc(100vh - 60px); // 最小高度，减去顶部导航栏高度
   display: flex;

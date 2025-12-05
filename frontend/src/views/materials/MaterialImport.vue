@@ -493,27 +493,91 @@
             :row-class-name="getRowClassName"
           >
             <el-table-column type="index" label="行号" width="60" />
-            <el-table-column prop="material_code" label="材料编码" width="120" show-overflow-tooltip />
-            <el-table-column prop="name" label="材料名称" min-width="150" show-overflow-tooltip />
-            <el-table-column prop="specification" label="规格型号" width="120" show-overflow-tooltip />
-            <el-table-column prop="unit" label="单位" width="80" />
-            <el-table-column prop="price_excluding_tax" label="除税信息价" width="120">
+            <el-table-column prop="material_code" label="材料编码" width="120" show-overflow-tooltip>
               <template #default="{ row }">
-                <span :class="{ 'invalid-data': !row.valid }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input v-model="row.material_code" size="small" placeholder="编码" />
+                </div>
+                <span v-else>{{ row.material_code || '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="name" label="材料名称" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input v-model="row.name" size="small" placeholder="材料名称" />
+                </div>
+                <span v-else :class="{ 'invalid-data': !row.valid && !row.name }">{{ row.name || '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="specification" label="规格型号" width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input v-model="row.specification" size="small" placeholder="规格" />
+                </div>
+                <span v-else>{{ row.specification || '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="unit" label="单位" width="120">
+              <template #default="{ row }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input v-model="row.unit" size="small" placeholder="单位" />
+                </div>
+                <span v-else :class="{ 'invalid-data': !row.valid && !row.unit }">{{ row.unit || '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="price_excluding_tax" label="除税信息价" width="140">
+              <template #default="{ row }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input-number 
+                    v-model="row.price_excluding_tax" 
+                    size="small" 
+                    :precision="2" 
+                    :min="0"
+                    controls-position="right"
+                    style="width: 100%"
+                  />
+                </div>
+                <span v-else :class="{ 'invalid-data': !row.valid && (!row.price_excluding_tax || row.price_excluding_tax <= 0) }">
                   ¥{{ formatNumber(row.price_excluding_tax) }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="price_including_tax" label="含税信息价" width="120">
+            <el-table-column prop="price_including_tax" label="含税信息价" width="140">
               <template #default="{ row }">
-                <span v-if="row.price_including_tax" :class="{ 'invalid-data': !row.valid }">
-                  ¥{{ formatNumber(row.price_including_tax) }}
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input-number 
+                    v-model="row.price_including_tax" 
+                    size="small" 
+                    :precision="2" 
+                    :min="0"
+                    controls-position="right"
+                    style="width: 100%"
+                  />
+                </div>
+                <span v-else>
+                  <span v-if="row.price_including_tax" :class="{ 'invalid-data': !row.valid }">
+                    ¥{{ formatNumber(row.price_including_tax) }}
+                  </span>
+                  <span v-else class="no-data">--</span>
                 </span>
-                <span v-else class="no-data">--</span>
               </template>
             </el-table-column>
-            <el-table-column prop="region" label="地区" width="100" show-overflow-tooltip />
-            <el-table-column prop="remarks" label="备注" width="150" show-overflow-tooltip />
+            <el-table-column prop="region" label="地区" width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input v-model="row.region" size="small" placeholder="地区" />
+                </div>
+                <span v-else>{{ row.region || '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="remarks" label="备注" width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div v-if="isEditing(row)" class="editable-cell">
+                  <el-input v-model="row.remarks" size="small" placeholder="备注" />
+                </div>
+                <span v-else>{{ row.remarks || '--' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="100">
               <template #default="{ row }">
                 <el-tag v-if="row.duplicate" type="warning" size="small">重复</el-tag>
@@ -527,6 +591,38 @@
                 <span v-if="row.errors && row.errors.length > 0" class="error-text">
                   {{ row.errors.join(', ') }}
                 </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right" v-if="previewFilter === 'invalid'">
+              <template #default="{ row }">
+                <div v-if="!row.valid && !row.duplicate" class="action-buttons">
+                  <el-button
+                    v-if="!isEditing(row)"
+                    type="primary"
+                    size="small"
+                    :icon="Edit"
+                    @click="startEditing(row)"
+                  >
+                    编辑
+                  </el-button>
+                  <template v-else>
+                    <el-button
+                      type="success"
+                      size="small"
+                      :icon="Check"
+                      @click="saveEditing(row)"
+                    >
+                      保存
+                    </el-button>
+                    <el-button
+                      size="small"
+                      :icon="Close"
+                      @click="cancelEditing(row)"
+                    >
+                      取消
+                    </el-button>
+                  </template>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -755,7 +851,10 @@ import {
   Location,
   InfoFilled,
   WarningFilled,
-  Delete
+  Delete,
+  Edit,
+  Check,
+  Close
 } from '@element-plus/icons-vue'
 import { formatNumber } from '@/utils'
 // 使用基准材料的API函数
@@ -788,6 +887,10 @@ const previewFilter = ref('all')
 // 完整导入数据的响应式管理
 const fullImportData = ref([])
 const hasFullData = computed(() => fullImportData.value.length > 0)
+
+// 编辑相关状态
+const editingRows = ref(new Set()) // 正在编辑的行索引集合
+const originalRowData = ref(new Map()) // 保存编辑前的原始数据
 
 // 信息价类型选择表单
 const priceTypeForm = reactive({
@@ -1052,10 +1155,18 @@ const calculateFullDataStats = () => {
       if (columnIndex === '' || columnIndex === undefined) return ''
       
       if (row.data && availableColumns.value[columnIndex]) {
-        return row.data[availableColumns.value[columnIndex]] || ''
-      } else {
-        return row[`col_${columnIndex}`] || ''
+        const mappedValue = row.data[availableColumns.value[columnIndex]]
+        if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+          return mappedValue
+        }
       }
+      
+      const fallbackValue = row[`col_${columnIndex}`]
+      if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+        return fallbackValue
+      }
+      
+      return ''
     }
     
     const name = getValue('name') || ''
@@ -1175,10 +1286,18 @@ const processFullDataWithMapping = (sourceData) => {
       if (columnIndex === '' || columnIndex === undefined) return ''
       
       if (row.data && availableColumns.value[columnIndex]) {
-        return row.data[availableColumns.value[columnIndex]] || ''
-      } else {
-        return row[`col_${columnIndex}`] || ''
+        const mappedValue = row.data[availableColumns.value[columnIndex]]
+        if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+          return mappedValue
+        }
       }
+      
+      const fallbackValue = row[`col_${columnIndex}`]
+      if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+        return fallbackValue
+      }
+      
+      return ''
     }
       
     const name = getValue('name') || ''
@@ -1608,6 +1727,15 @@ const autoMappingAndPreview = async () => {
   ElMessage.success('智能映射完成，请检查映射结果，确认无误后点击"下一步"')
 }
 
+// 去除空格/全角空格等，用于列名匹配
+const normalizeForMatch = (text) => {
+  if (!text) return ''
+  return String(text)
+    .replace(/[\s\u00A0\u3000]/g, '')
+    .replace(/[（）]/g, (ch) => (ch === '（' ? '(' : ch === '）' ? ')' : ch))
+    .trim()
+}
+
 // 智能映射 - 适配基准材料字段
 const autoMapping = () => {
   const columns = availableColumns.value
@@ -1635,7 +1763,8 @@ const autoMapping = () => {
       'price_excluding_tax', 'price_ex_tax', 'net_price', 'price', 'unit_price', 'cost'
     ],
     price_including_tax: [
-      '含税价格', '含税信息价', '包税价格', '含税价', '税后价格', '毛价',
+      '含税价格', '含税信息价', '包税价格', '含税价', '含税', '含税信息',
+      '信息价（含税）', '信息价(含税)', '税后价格', '毛价',
       'price_including_tax', 'price_inc_tax', 'gross_price', 'total_price'
     ],
     region: [
@@ -1658,21 +1787,33 @@ const autoMapping = () => {
     
     columns.forEach((column, index) => {
       const columnStr = String(column).trim()
+      const normalizedColumn = normalizeForMatch(columnStr)
+      const lowerColumn = columnStr.toLowerCase()
+      const normalizedLowerColumn = normalizedColumn.toLowerCase()
       let score = 0
+      const hasExactMatch = keywords.some(keyword => normalizeForMatch(keyword) === normalizedColumn)
       
-      if (keywords.includes(columnStr)) {
+      if (hasExactMatch) {
         score = 100
       } else {
         keywords.forEach(keyword => {
-          if (columnStr.includes(keyword)) {
-            score += 50
-          } else if (columnStr.toLowerCase().includes(keyword.toLowerCase())) {
-            score += 30
+          const normalizedKeyword = normalizeForMatch(keyword)
+          if (!normalizedKeyword) {
+            return
           }
-        })
-        
-        keywords.forEach(keyword => {
-          const similarity = calculateSimilarity(columnStr, keyword)
+          
+          const lowerKeyword = keyword.toLowerCase()
+          const normalizedLowerKeyword = normalizedKeyword.toLowerCase()
+          
+          if (
+            columnStr.includes(keyword) ||
+            lowerColumn.includes(lowerKeyword) ||
+            normalizedLowerColumn.includes(normalizedLowerKeyword)
+          ) {
+            score += 50
+          }
+          
+          const similarity = calculateSimilarity(normalizedColumn, normalizedKeyword)
           if (similarity > 0.6) {
             score += similarity * 20
           }
@@ -1852,14 +1993,19 @@ const previewFileData = async () => {
         const columnIndex = fieldMapping[fieldName]
         if (columnIndex === '' || columnIndex === undefined) return ''
         
-        // 支持两种数据访问方式
         if (row.data && availableColumns.value[columnIndex]) {
-          // 使用列名访问
-          return row.data[availableColumns.value[columnIndex]] || ''
-        } else {
-          // 使用索引访问（向后兼容）
-          return row[`col_${columnIndex}`] || ''
+          const mappedValue = row.data[availableColumns.value[columnIndex]]
+          if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+            return mappedValue
+          }
         }
+        
+        const fallbackValue = row[`col_${columnIndex}`]
+        if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+          return fallbackValue
+        }
+        
+        return ''
       }
         
         const name = getValue('name') || ''
@@ -1870,15 +2016,29 @@ const previewFileData = async () => {
         
         // 根据信息价类型确定适用地区显示文本
         const getPreviewRegionText = () => {
+          const excelRegion = getValue('region') || ''
+          
           if (priceTypeForm.priceType === 'provincial') {
-            // 省刊信息价不显示适用地区
-            return '-'
+            // 省刊信息价
+             const provinceCode = priceTypeForm.province || ''
+             const provinceName = provinceOptions.value.find(p => p.value === provinceCode)?.label || provinceCode
+             
+             if (excelRegion && excelRegion !== provinceCode && !excelRegion.includes(provinceName)) {
+                return `${provinceName} ${excelRegion}`
+             }
+             return provinceName
           } else if (priceTypeForm.priceType === 'municipal') {
-            // 市刊信息价显示用户选择的城市
-            return priceTypeForm.city || '未选择城市'
+            // 市刊信息价
+            const cityCode = priceTypeForm.city || ''
+            const cityName = currentCityOptions.value.find(c => c.value === cityCode)?.label || (cityCode || '未选择城市')
+            
+            if (excelRegion && excelRegion !== cityCode && !excelRegion.includes(cityName)) {
+               return `${cityName} ${excelRegion}`
+            }
+            return cityName
           } else {
             // 未选择信息价类型时，显示Excel中的原始地区信息
-            return getValue('region') || ''
+            return excelRegion
           }
         }
 
@@ -2005,15 +2165,42 @@ const getImportCount = () => {
   for (let i = 0; i < sourceData.length; i++) {
     const row = sourceData[i]
     
+    // 修改 getValue 函数，优先使用已编辑的字段值
     const getValue = (fieldName) => {
+      // 如果数据被编辑过，直接使用 row 对象中的值
+      if (row._edited && row.hasOwnProperty(fieldName)) {
+        const value = row[fieldName]
+        if (value !== undefined && value !== null) {
+          return String(value)
+        }
+      }
+      
+      // 如果 row 中直接有该字段（预览时生成的），也优先使用
+      if (row.hasOwnProperty(fieldName) && !fieldName.startsWith('_') && fieldName !== 'data' && fieldName !== 'valid' && fieldName !== 'errors' && fieldName !== 'duplicate' && fieldName !== 'row_index') {
+        const value = row[fieldName]
+        // 确保返回的是有效值
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+          return String(value)
+        }
+      }
+      
+      // 否则从原始数据中提取
       const columnIndex = fieldMapping[fieldName]
       if (columnIndex === '' || columnIndex === undefined) return ''
       
       if (row.data && availableColumns.value[columnIndex]) {
-        return row.data[availableColumns.value[columnIndex]] || ''
-      } else {
-        return row[`col_${columnIndex}`] || ''
+        const mappedValue = row.data[availableColumns.value[columnIndex]]
+        if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+          return mappedValue
+        }
       }
+      
+      const fallbackValue = row[`col_${columnIndex}`]
+      if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+        return fallbackValue
+      }
+      
+      return ''
     }
     
     const item = {
@@ -2098,28 +2285,69 @@ const startImport = async () => {
     for (let i = 0; i < sourceDataForImport.length; i++) {
       const row = sourceDataForImport[i]
       
+      // 修改 getValue 函数，优先使用已编辑的字段值
       const getValue = (fieldName) => {
+        // 如果数据被编辑过，直接使用 row 对象中的值
+        if (row._edited && row.hasOwnProperty(fieldName)) {
+          const value = row[fieldName]
+          if (value !== undefined && value !== null) {
+            return String(value)
+          }
+        }
+        
+        // 如果 row 中直接有该字段（预览时生成的），也优先使用
+        if (row.hasOwnProperty(fieldName) && !fieldName.startsWith('_') && fieldName !== 'data' && fieldName !== 'valid' && fieldName !== 'errors' && fieldName !== 'duplicate' && fieldName !== 'row_index') {
+          const value = row[fieldName]
+          // 确保返回的是有效值
+          if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return String(value)
+          }
+        }
+        
+        // 否则从原始数据中提取
         const columnIndex = fieldMapping[fieldName]
         if (columnIndex === '' || columnIndex === undefined) return ''
         
         if (row.data && availableColumns.value[columnIndex]) {
-          return row.data[availableColumns.value[columnIndex]] || ''
-        } else {
-          return row[`col_${columnIndex}`] || ''
+          const mappedValue = row.data[availableColumns.value[columnIndex]]
+          if (mappedValue !== undefined && mappedValue !== null && String(mappedValue).trim() !== '') {
+            return mappedValue
+          }
         }
+        
+        const fallbackValue = row[`col_${columnIndex}`]
+        if (fallbackValue !== undefined && fallbackValue !== null && String(fallbackValue).trim() !== '') {
+          return fallbackValue
+        }
+        
+        return ''
       }
       
       // 根据信息价类型确定适用地区
       const getImportRegionText = () => {
+        const excelRegion = getValue('region') || ''
+        
         if (priceTypeForm.priceType === 'provincial') {
-          // 省刊信息价：使用省份信息
-          return priceTypeForm.province || ''
+          // 省刊信息价：如果Excel有更详细地区，保留组合信息，否则使用省份
+          const provinceCode = priceTypeForm.province || ''
+          const provinceName = provinceOptions.value.find(p => p.value === provinceCode)?.label || provinceCode
+          
+          if (excelRegion && excelRegion !== provinceCode && !excelRegion.includes(provinceName)) {
+            return `${provinceName} ${excelRegion}`
+          }
+          return provinceName
         } else if (priceTypeForm.priceType === 'municipal') {
-          // 市刊信息价：使用城市信息
-          return priceTypeForm.city || ''
+          // 市刊信息价：如果Excel有更详细地区（如区县），保留组合信息
+          const cityCode = priceTypeForm.city || ''
+          const cityName = currentCityOptions.value.find(c => c.value === cityCode)?.label || cityCode
+          
+          if (excelRegion && excelRegion !== cityCode && !excelRegion.includes(cityName)) {
+             return `${cityName} ${excelRegion}`
+          }
+          return cityName
         } else {
           // 未选择类型时保留Excel中的原始地区信息
-          return getValue('region') || ''
+          return excelRegion
         }
       }
 
@@ -2140,6 +2368,11 @@ const startImport = async () => {
         duplicate: false,
         _period: itemPeriod, // 保存期数信息
         _sheetName: row._sheetName || '' // 保存工作表名称
+      }
+      
+      // 如果是编辑过的数据，输出日志
+      if (row._edited) {
+        console.log(`🔧 导入编辑后的数据 - 行${row.row_index}: 名称=${item.name}, 单位=${item.unit}, 价格=${item.price_excluding_tax}`)
       }
       
       // 数据验证
@@ -2596,6 +2829,121 @@ watch(() => priceTypeForm.city, (newCity) => {
     updateRegionInfo()
   }
 })
+
+// 编辑功能相关方法
+const getRowKey = (row) => {
+  // 使用行索引作为唯一键
+  return row.row_index
+}
+
+const isEditing = (row) => {
+  return editingRows.value.has(getRowKey(row))
+}
+
+const startEditing = (row) => {
+  const key = getRowKey(row)
+  
+  // 保存原始数据
+  originalRowData.value.set(key, JSON.parse(JSON.stringify(row)))
+  
+  // 标记为正在编辑
+  editingRows.value.add(key)
+  
+  ElMessage.info('进入编辑模式，请修改数据')
+}
+
+const cancelEditing = (row) => {
+  const key = getRowKey(row)
+  
+  // 恢复原始数据
+  const original = originalRowData.value.get(key)
+  if (original) {
+    Object.assign(row, original)
+    originalRowData.value.delete(key)
+  }
+  
+  // 取消编辑状态
+  editingRows.value.delete(key)
+  
+  ElMessage.info('已取消编辑')
+}
+
+const saveEditing = (row) => {
+  const key = getRowKey(row)
+  
+  // 验证数据
+  const errors = []
+  
+  if (!row.name || row.name.trim() === '') {
+    errors.push('材料名称不能为空')
+  }
+  
+  if (!row.unit || row.unit.trim() === '') {
+    errors.push('单位不能为空')
+  }
+  
+  if (!row.price_excluding_tax || row.price_excluding_tax <= 0) {
+    errors.push('除税信息价必须大于0')
+  }
+  
+  if (isNaN(row.price_excluding_tax)) {
+    errors.push('除税信息价格式错误')
+  }
+  
+  if (row.price_including_tax && isNaN(row.price_including_tax)) {
+    errors.push('含税信息价格式错误')
+  }
+  
+  // 如果还有错误，提示用户
+  if (errors.length > 0) {
+    ElMessage.error('数据验证失败：' + errors.join(', '))
+    return
+  }
+  
+  // 数据有效，更新状态
+  row.valid = true
+  row.errors = []
+  // 标记为已编辑，确保导入时使用编辑后的值
+  row._edited = true
+  
+  // 规范化数据格式
+  row.name = String(row.name || '').trim()
+  row.unit = String(row.unit || '').trim()
+  row.material_code = String(row.material_code || '').trim()
+  row.specification = String(row.specification || '').trim()
+  row.region = String(row.region || '').trim()
+  row.remarks = String(row.remarks || '').trim()
+  row.price_excluding_tax = parseFloat(row.price_excluding_tax) || 0
+  row.price_including_tax = parseFloat(row.price_including_tax) || 0
+  
+  // 如果该行在完整数据中也存在，同步更新
+  if (hasFullData.value && fullImportData.value.length > 0) {
+    const fullDataRow = fullImportData.value.find(item => item.row_index === row.row_index)
+    if (fullDataRow) {
+      fullDataRow.name = row.name
+      fullDataRow.unit = row.unit
+      fullDataRow.specification = row.specification
+      fullDataRow.material_code = row.material_code
+      fullDataRow.price_excluding_tax = row.price_excluding_tax
+      fullDataRow.price_including_tax = row.price_including_tax
+      fullDataRow.region = row.region
+      fullDataRow.remarks = row.remarks
+      fullDataRow.valid = true
+      fullDataRow.errors = []
+      fullDataRow._edited = true
+    }
+  }
+  
+  // 清除编辑状态
+  editingRows.value.delete(key)
+  originalRowData.value.delete(key)
+  
+  // 重新计算统计数据
+  calculateFullDataStats()
+  
+  console.log(`数据已修复: 行${row.row_index}, 材料名称: ${row.name}, 单位: ${row.unit}, 价格: ${row.price_excluding_tax}`)
+  ElMessage.success('数据已修复！该条数据将作为有效数据导入')
+}
 
 // 生命周期
 onMounted(() => {
@@ -3251,6 +3599,28 @@ onMounted(() => {
   .no-data {
     color: #c0c4cc;
     font-style: italic;
+  }
+  
+  .editable-cell {
+    padding: 0;
+    
+    :deep(.el-input__inner) {
+      border-color: #409eff;
+    }
+    
+    :deep(.el-input-number) {
+      width: 100%;
+      
+      .el-input__inner {
+        border-color: #409eff;
+      }
+    }
+  }
+  
+  .action-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
   }
 }
 

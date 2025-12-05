@@ -30,6 +30,9 @@ export function batchDeleteBaseMaterials(ids) {
   return request.post('/base-materials/batch-operation', { 
     material_ids: ids,
     operation: 'delete'
+  }, {
+    specialTimeout: 'batchDelete',  // 使用特殊超时配置（5分钟）
+    __skipLoading: true  // 跳过全局loading，使用自定义loading
   })
 }
 
@@ -68,6 +71,11 @@ export function exportBaseMaterials(params) {
 // 获取基准材料导入模板
 export function downloadBaseMaterialTemplate() {
   return request.download('/base-materials/template')
+}
+
+// 删除期数内的所有材料
+export function deleteMaterialsByPeriod(data) {
+  return request.post('/base-materials/periods/delete', data)
 }
 
 // 获取Excel文件预览数据
@@ -112,6 +120,11 @@ export function parseExcelStructure(file, options = {}) {
 // 预览导入数据
 export function previewImportData(data) {
   return request.post('/base-materials/preview-import', data)
+}
+
+// 获取材料期数列表
+export function getMaterialPeriods() {
+  return request.get('/base-materials/periods')
 }
 
 // 获取材料分类选项

@@ -20,7 +20,7 @@
       <el-menu
         :default-active="activeMenu"
         :collapse="isCollapsed"
-        :unique-opened="true"
+        :unique-opened="false"
         :collapse-transition="false"
         mode="vertical"
         :background-color="menuColors.backgroundColor"

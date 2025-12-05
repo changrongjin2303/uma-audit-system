@@ -111,9 +111,13 @@ export function deleteProjectMaterial(projectId, materialId) {
 }
 
 // 解析项目材料Excel文件结构
-export function parseProjectMaterialExcel(projectId, file) {
+export function parseProjectMaterialExcel(projectId, file, options = {}) {
   const formData = new FormData()
   formData.append('file', file)
+  
+  if (options.sheet_name) {
+    formData.append('sheet_name', options.sheet_name)
+  }
   
   return request.post(`/projects/${projectId}/parse-material-excel`, formData, {
     headers: {

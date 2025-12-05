@@ -15,7 +15,11 @@ class AnalysisStatus(str, enum.Enum):
 
 
 class PriceAnalysis(Base):
-    """价格分析表"""
+    """价格分析表（当前最新结果，仍保持每个材料一条记录）
+
+    注意：从 2025-12 以后，历史记录会同步写入 `PriceAnalysisHistory` 表，
+    前端时间线优先从历史表读取，当前表只保存“最新一次”的完整结果，避免破坏现有逻辑。
+    """
     __tablename__ = "price_analyses"
     
     id = Column(Integer, primary_key=True, index=True)
@@ -76,6 +80,33 @@ class PriceAnalysis(Base):
     )
 
 
+class PriceAnalysisHistory(Base):
+    """价格分析历史表：记录每一次完整分析快照，用于前端时间线展示"""
+    __tablename__ = "price_analysis_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    material_id = Column(Integer, ForeignKey("project_materials.id", ondelete="CASCADE"), nullable=False, comment="项目材料ID")
+
+    # 分析状态和核心结果快照（与现有PostgreSQL枚举类型analysisstatus保持一致）
+    status = Column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, comment="分析状态")
+    predicted_price_min = Column(Float, nullable=True, comment="预测价格下限")
+    predicted_price_max = Column(Float, nullable=True, comment="预测价格上限")
+    confidence_score = Column(Float, nullable=True, comment="置信度评分")
+    risk_level = Column(String(20), nullable=True, comment="风险等级")
+    analysis_model = Column(String(50), nullable=True, comment="使用的AI模型")
+    analysis_cost = Column(Float, nullable=True, comment="分析成本")
+    analysis_time = Column(Float, nullable=True, comment="分析耗时（秒）")
+    analysis_reasoning = Column(Text, nullable=True, comment="分析简要说明/备注")
+
+    # 时间戳（历史记录创建时间）
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="历史记录时间")
+
+    __table_args__ = (
+        Index('ix_price_analysis_history_material', 'material_id'),
+        Index('ix_price_analysis_history_status', 'status'),
+    )
+    
+    
 class AuditReport(Base):
     """审计报告表"""
     __tablename__ = "audit_reports"

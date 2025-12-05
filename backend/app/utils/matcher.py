@@ -33,12 +33,12 @@ class MaterialMatcher:
         'low': 0.45        # 低匹配度，标记为疑似
     }
     
-    # 权重配置
+    # 权重配置：名称主导，规格辅助，兼顾单位
     WEIGHTS = {
-        'name': 0.4,       # 名称权重
-        'specification': 0.3,  # 规格权重
-        'category': 0.2,   # 分类权重
-        'unit': 0.1        # 单位权重
+        'name': 0.6,           # 名称权重 (主导)
+        'specification': 0.3,  # 规格权重 (区分同名不同规格)
+        'category': 0.0,       # 分类不参与评分
+        'unit': 0.1            # 单位权重 (辅助)
     }
     
     def __init__(self):

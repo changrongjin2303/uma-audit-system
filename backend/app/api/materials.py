@@ -9,7 +9,8 @@ from app.models.user import User
 from app.schemas.material import (
     BaseMaterialCreate, BaseMaterialUpdate, BaseMaterialResponse,
     BaseMaterialSearchRequest, BaseMaterialImportRequest, BaseMaterialImportResponse,
-    BaseMaterialBatchOperation, MaterialAliasCreate, MaterialAliasResponse
+    BaseMaterialBatchOperation, MaterialAliasCreate, MaterialAliasResponse,
+    BaseMaterialPeriodDeleteRequest
 )
 from app.services.material import BaseMaterialService, MaterialImportService
 from app.utils.excel import ExcelProcessor
@@ -356,6 +357,47 @@ async def import_base_materials(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"材料导入失败: {str(e)}"
+        )
+
+
+@router.get("/periods")
+async def get_material_periods(
+    # current_user: SimpleUser = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取材料期数列表"""
+    periods = await BaseMaterialService.get_material_periods(db)
+    return {
+        "code": 200,
+        "message": "获取成功",
+        "data": periods
+    }
+
+
+@router.post("/periods/delete")
+async def delete_materials_by_period(
+    delete_request: BaseMaterialPeriodDeleteRequest,
+    # current_user: SimpleUser = Depends(require_admin()),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除某一期数下的所有材料"""
+    try:
+        result = await BaseMaterialService.delete_materials_by_period(db, delete_request)
+        return {
+            "code": 200,
+            "message": f"成功删除 {result['deleted_count']} 条材料数据",
+            "data": result
+        }
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    except Exception as e:
+        logger.error(f"删除期数材料失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="删除期数材料失败"
         )
 
 
