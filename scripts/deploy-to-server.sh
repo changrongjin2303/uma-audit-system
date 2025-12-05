@@ -38,12 +38,12 @@ echo "📦 加载前端镜像..."
 docker load -i uma-audit5-frontend-amd64.tar
 
 echo "🚀 重启服务..."
-docker-compose -f docker-compose.prod.yml up -d
+docker-compose restart backend frontend
 
 echo ""
 echo "✅ 部署完成！"
 echo ""
-docker-compose -f docker-compose.prod.yml ps
+docker-compose ps
 ENDSSH
 
 echo ""

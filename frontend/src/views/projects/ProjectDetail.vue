@@ -690,6 +690,15 @@
               <div class="model-desc">字节跳动豆包大模型，高性能推理</div>
             </div>
           </el-radio>
+          <el-radio value="deepseek" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><ChatDotRound /></el-icon>
+                DeepSeek (V3)
+              </div>
+              <div class="model-desc">深度求索DeepSeek-V3模型，超强推理能力</div>
+            </div>
+          </el-radio>
         </el-radio-group>
       </div>
       <template #footer>
@@ -789,7 +798,8 @@ import {
   Delete,
   DataAnalysis,
   InfoFilled,
-  MagicStick
+  MagicStick,
+  ChatDotRound
 } from '@element-plus/icons-vue'
 import {
   getProject,
@@ -1421,7 +1431,12 @@ const confirmStartPriceAnalysis = async () => {
   // 关闭模型选择对话框
   showModelSelectDialog.value = false
   
-  const modelName = selectedAIModel.value === 'dashscope' ? '通义千问' : '豆包'
+  const modelMap = {
+    'dashscope': '通义千问',
+    'doubao': '豆包',
+    'deepseek': 'DeepSeek'
+  }
+  const modelName = modelMap[selectedAIModel.value] || selectedAIModel.value
   console.log('用户选择的AI模型:', modelName)
   
   try {

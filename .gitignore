@@ -80,6 +80,7 @@ docker-compose.override.yml
 docker-compose.prod.yml
 
 # Docker镜像导出文件（部署用）
+*.tar
 *.tar.gz
 *.tar.xz
 *.tar.bz2
