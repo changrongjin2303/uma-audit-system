@@ -1,0 +1,42 @@
+# Python 虚拟环境
+venv/
+.venv/
+env/
+.env
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 本地生成的文件
+reports/
+exports/
+uploads/
+logs/
+attachments/
+
+# IDE 和系统文件
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 测试和开发文件
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Git
+.git/
+.gitignore
+
+# 其他
+*.tar
+*.zip
+*.log

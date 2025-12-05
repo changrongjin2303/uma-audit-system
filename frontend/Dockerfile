@@ -1,5 +1,5 @@
 # 多阶段构建 - 构建阶段
-FROM docker.m.daocloud.io/library/node:18-alpine AS builder
+FROM node:18-alpine AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build
 
 # 生产阶段
-FROM docker.m.daocloud.io/library/nginx:alpine
+FROM nginx:alpine
 
 # 复制构建产物
 COPY --from=builder /app/dist /usr/share/nginx/html
