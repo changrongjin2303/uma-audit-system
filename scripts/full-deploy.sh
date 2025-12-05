@@ -31,10 +31,10 @@ fi
 git add .
 # 检查是否有变更需要提交
 if ! git diff-index --quiet HEAD --; then
-    read -p "📝 检测到未提交的更改，请输入提交信息 (默认: 'Update and deploy'): " commit_msg
-    commit_msg=${commit_msg:-"Update and deploy"}
+    # 自动提交，不再询问
+    commit_msg="Update and deploy (Auto-commit)"
     git commit -m "$commit_msg"
-    echo "✅ 代码已提交"
+    echo "✅ 代码已自动提交"
 else
     echo "✨ 没有需要提交的更改"
 fi
