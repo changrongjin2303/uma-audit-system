@@ -68,8 +68,9 @@ class Project(Base):
     
     # 处理统计
     total_materials = Column(Integer, default=0, comment="材料总数")
-    priced_materials = Column(Integer, default=0, comment="市场信息价材料数量")
-    unpriced_materials = Column(Integer, default=0, comment="无信息价材料数量")
+    priced_materials = Column(Integer, default=0, comment="市场信息价材料数量(相似度>=0.85)")
+    needs_review_materials = Column(Integer, default=0, comment="需人工复核材料数量(相似度0.65-0.85)")
+    unpriced_materials = Column(Integer, default=0, comment="无信息价材料数量(相似度<0.65)")
     problematic_materials = Column(Integer, default=0, comment="问题材料数量")
     
     # 时间信息
@@ -99,7 +100,8 @@ class ProjectMaterial(Base):
     subcategory = Column(String(100), nullable=True, comment="材料子分类")
     
     # 匹配状态
-    is_matched = Column(Boolean, default=False, comment="是否已匹配")
+    is_matched = Column(Boolean, default=False, comment="是否已匹配(相似度>=0.85)")
+    needs_review = Column(Boolean, default=False, comment="是否需人工复核(相似度0.65-0.85)")
     matched_material_id = Column(Integer, ForeignKey("base_materials.id"), nullable=True, comment="匹配的基准材料ID")
     match_score = Column(Float, nullable=True, comment="匹配得分")
     match_method = Column(String(50), nullable=True, comment="匹配方法")

@@ -16,6 +16,10 @@ class MaterialMatchingService:
     def __init__(self):
         self.matcher = MaterialMatcher()
     
+    # 匹配阈值常量
+    HIGH_MATCH_THRESHOLD = 0.85  # 高匹配度阈值，自动标记为已匹配
+    REVIEW_THRESHOLD = 0.65      # 中匹配度阈值，标记为需人工复核
+    
     async def match_project_materials(
         self,
         db: AsyncSession,
@@ -25,14 +29,15 @@ class MaterialMatchingService:
     ) -> Dict[str, Any]:
         """匹配项目中的所有材料"""
         
-        # 获取项目中未匹配的材料
-        unmatched_materials = await self._get_unmatched_materials(db, project_id)
+        # 获取项目中未匹配的材料（包括需要复核的）
+        unmatched_materials = await self._get_pending_materials(db, project_id)
         
         if not unmatched_materials:
             return {
                 'total_materials': 0,
                 'matched_count': 0,
                 'unmatched_count': 0,
+                'needs_review_count': 0,
                 'auto_matched': 0,
                 'manual_review_required': 0
             }
@@ -56,8 +61,8 @@ class MaterialMatchingService:
         
         # 统计结果
         matched_count = 0
+        needs_review_count = 0
         auto_matched = 0
-        manual_review_required = 0
         
         # 分批处理材料匹配
         for i in range(0, len(unmatched_materials), batch_size):
@@ -73,19 +78,28 @@ class MaterialMatchingService:
                     if match_results:
                         best_match = match_results[0]
 
-                        # 只有相似度达到阈值才标记为匹配
-                        if best_match.similarity_score >= auto_match_threshold:
-                            # 更新匹配结果
+                        # 相似度 >= 0.85：标记为已匹配
+                        if best_match.similarity_score >= self.HIGH_MATCH_THRESHOLD:
                             await self._update_material_match(
-                                db, project_material, best_match
+                                db, project_material, best_match, 
+                                is_matched=True, needs_review=False
                             )
-
                             matched_count += 1
                             auto_matched += 1
+                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} >= 0.85，标记为已匹配")
+                        
+                        # 相似度 >= 0.65 且 < 0.85：标记为需人工复核
+                        elif best_match.similarity_score >= self.REVIEW_THRESHOLD:
+                            await self._update_material_match(
+                                db, project_material, best_match,
+                                is_matched=False, needs_review=True
+                            )
+                            needs_review_count += 1
+                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} 在 0.65-0.85 之间，标记为需人工复核")
+                        
+                        # 相似度 < 0.65：未匹配
                         else:
-                            # 相似度不够，不匹配，记录为需要人工审核
-                            manual_review_required += 1
-                            logger.debug(f"材料 '{project_material.material_name}' 最佳匹配相似度 {best_match.similarity_score:.3f} 低于阈值 {auto_match_threshold}，不匹配")
+                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} < 0.65，标记为未匹配")
 
                 except Exception as e:
                     logger.error(f"匹配材料 {project_material.id} 时出错: {e}")
@@ -94,12 +108,15 @@ class MaterialMatchingService:
         # 更新项目统计
         await self._update_project_statistics(db, project_id)
         
+        unmatched_count = len(unmatched_materials) - matched_count - needs_review_count
+        
         return {
             'total_materials': len(unmatched_materials),
             'matched_count': matched_count,
-            'unmatched_count': len(unmatched_materials) - matched_count,
+            'unmatched_count': unmatched_count,
+            'needs_review_count': needs_review_count,
             'auto_matched': auto_matched,
-            'manual_review_required': manual_review_required
+            'manual_review_required': needs_review_count
         }
     
     async def match_single_material_interactive(
@@ -256,24 +273,37 @@ class MaterialMatchingService:
         
         # 统计各种状态的材料
         matched_materials = [m for m in total_materials if m.is_matched]
-        unmatched_materials = [m for m in total_materials if not m.is_matched]
+        
+        # 安全地访问 needs_review 属性（可能不存在于旧数据库）
+        needs_review_materials = []
+        unmatched_materials = []
+        for m in total_materials:
+            if not m.is_matched:
+                needs_review = getattr(m, 'needs_review', None)
+                if needs_review:
+                    needs_review_materials.append(m)
+                else:
+                    unmatched_materials.append(m)
         
         # 按匹配方法分类
-        auto_matched = [m for m in matched_materials if m.match_method == "auto_matched"]
+        auto_matched = [m for m in matched_materials if m.match_method and "auto" in m.match_method]
         user_confirmed = [m for m in matched_materials if m.match_method == "user_confirmed"]
+        hierarchical_matched = [m for m in matched_materials if m.match_method and "hierarchical" in m.match_method]
         
         # 按置信度分类
         high_confidence = [m for m in matched_materials if m.match_score and m.match_score >= 0.85]
-        medium_confidence = [m for m in matched_materials if m.match_score and 0.65 <= m.match_score < 0.85]
-        low_confidence = [m for m in matched_materials if m.match_score and m.match_score < 0.65]
+        medium_confidence = [m for m in needs_review_materials if m.match_score and 0.65 <= m.match_score < 0.85]
+        low_confidence = [m for m in total_materials if m.match_score and m.match_score < 0.65]
         
         return {
             'total_materials': len(total_materials),
             'matched_materials': len(matched_materials),
+            'needs_review_materials': len(needs_review_materials),
             'unmatched_materials': len(unmatched_materials),
             'matching_rate': len(matched_materials) / len(total_materials) if total_materials else 0,
             'auto_matched': len(auto_matched),
             'user_confirmed': len(user_confirmed),
+            'hierarchical_matched': len(hierarchical_matched),
             'high_confidence': len(high_confidence),
             'medium_confidence': len(medium_confidence),
             'low_confidence': len(low_confidence),
@@ -284,14 +314,58 @@ class MaterialMatchingService:
         db: AsyncSession,
         project_id: int
     ) -> List[ProjectMaterial]:
-        """获取未匹配的项目材料"""
+        """获取未匹配的项目材料（不包括需人工复核的）"""
         
-        stmt = select(ProjectMaterial).where(
-            and_(
-                ProjectMaterial.project_id == project_id,
-                ProjectMaterial.is_matched == False
+        try:
+            # 尝试使用 needs_review 字段（新版本）
+            if hasattr(ProjectMaterial, 'needs_review'):
+                stmt = select(ProjectMaterial).where(
+                    and_(
+                        ProjectMaterial.project_id == project_id,
+                        ProjectMaterial.is_matched == False,
+                        or_(ProjectMaterial.needs_review == False, ProjectMaterial.needs_review == None)
+                    )
+                )
+            else:
+                raise AttributeError("needs_review field not found")
+        except Exception:
+            # 回退到旧版本查询
+            stmt = select(ProjectMaterial).where(
+                and_(
+                    ProjectMaterial.project_id == project_id,
+                    ProjectMaterial.is_matched == False
+                )
             )
-        )
+        result = await db.execute(stmt)
+        return result.scalars().all()
+    
+    async def _get_pending_materials(
+        self,
+        db: AsyncSession,
+        project_id: int
+    ) -> List[ProjectMaterial]:
+        """获取待处理的项目材料（未匹配且不需要复核的）"""
+        
+        try:
+            # 尝试使用 needs_review 字段（新版本）
+            if hasattr(ProjectMaterial, 'needs_review'):
+                stmt = select(ProjectMaterial).where(
+                    and_(
+                        ProjectMaterial.project_id == project_id,
+                        ProjectMaterial.is_matched == False,
+                        or_(ProjectMaterial.needs_review == False, ProjectMaterial.needs_review == None)
+                    )
+                )
+            else:
+                raise AttributeError("needs_review field not found")
+        except Exception:
+            # 回退到旧版本查询
+            stmt = select(ProjectMaterial).where(
+                and_(
+                    ProjectMaterial.project_id == project_id,
+                    ProjectMaterial.is_matched == False
+                )
+            )
         result = await db.execute(stmt)
         return result.scalars().all()
     
@@ -386,11 +460,24 @@ class MaterialMatchingService:
         self,
         db: AsyncSession,
         project_material: ProjectMaterial,
-        match_result: MatchResult
+        match_result: MatchResult,
+        is_matched: bool = True,
+        needs_review: bool = False
     ):
-        """更新材料匹配结果"""
+        """更新材料匹配结果
         
-        project_material.is_matched = True
+        Args:
+            is_matched: 是否已匹配（相似度>=0.85）
+            needs_review: 是否需人工复核（相似度0.65-0.85）
+        """
+        
+        project_material.is_matched = is_matched
+        # needs_review 字段可能不存在于旧数据库
+        if hasattr(project_material, 'needs_review'):
+            try:
+                project_material.needs_review = needs_review
+            except Exception:
+                pass
         project_material.matched_material_id = match_result.base_material_id
         project_material.match_score = match_result.similarity_score
         project_material.match_method = match_result.match_method
@@ -420,19 +507,26 @@ class MaterialMatchingService:
         base_price_city: Optional[str] = None,
         base_price_district: Optional[str] = None
     ) -> Dict[str, Any]:
-        """三级地理层次材料匹配"""
+        """三级地理层次材料匹配
+        
+        匹配规则：
+        - 相似度 >= 0.85：已匹配（有信息价）
+        - 相似度 >= 0.65 且 < 0.85：需人工复核
+        - 相似度 < 0.65：未匹配（无信息价）
+        """
 
         logger.info(f"开始三级匹配项目 {project_id} 的材料")
         logger.info(f"基期信息价参数: 日期={base_price_date}, 省={base_price_province}, 市={base_price_city}, 区={base_price_district}")
 
-        # 获取项目中未匹配的材料
-        unmatched_materials = await self._get_unmatched_materials(db, project_id)
+        # 获取项目中待处理的材料（未匹配且不需要复核的）
+        unmatched_materials = await self._get_pending_materials(db, project_id)
 
         if not unmatched_materials:
             return {
                 'total_materials': 0,
                 'matched_count': 0,
                 'unmatched_count': 0,
+                'needs_review_count': 0,
                 'district_matched': 0,
                 'city_matched': 0,
                 'province_matched': 0,
@@ -444,8 +538,9 @@ class MaterialMatchingService:
         district_matched = 0
         city_matched = 0
         province_matched = 0
-        auto_matched = 0
-        manual_review_required = 0
+        district_review = 0
+        city_review = 0
+        province_review = 0
 
         # 三级匹配：区县级 -> 市级 -> 省级
         remaining_materials = unmatched_materials.copy()
@@ -457,11 +552,12 @@ class MaterialMatchingService:
                 db, base_price_date, "district", base_price_district
             )
 
-            remaining_materials, matched_count = await self._match_materials_with_base(
-                db, remaining_materials, district_base_materials, auto_match_threshold, "district"
+            remaining_materials, matched_count, review_count = await self._match_materials_with_base(
+                db, remaining_materials, district_base_materials, "district"
             )
             district_matched = matched_count
-            logger.info(f"区县级匹配完成，匹配 {district_matched} 个材料")
+            district_review = review_count
+            logger.info(f"区县级匹配完成，匹配 {district_matched} 个材料，需复核 {district_review} 个")
 
         # 第二级：市级匹配
         if base_price_city and remaining_materials:
@@ -470,11 +566,12 @@ class MaterialMatchingService:
                 db, base_price_date, "municipal", base_price_city
             )
 
-            remaining_materials, matched_count = await self._match_materials_with_base(
-                db, remaining_materials, city_base_materials, auto_match_threshold, "city"
+            remaining_materials, matched_count, review_count = await self._match_materials_with_base(
+                db, remaining_materials, city_base_materials, "city"
             )
             city_matched = matched_count
-            logger.info(f"市级匹配完成，匹配 {city_matched} 个材料")
+            city_review = review_count
+            logger.info(f"市级匹配完成，匹配 {city_matched} 个材料，需复核 {city_review} 个")
 
         # 第三级：省级匹配
         if base_price_province and remaining_materials:
@@ -483,18 +580,19 @@ class MaterialMatchingService:
                 db, base_price_date, "provincial", base_price_province
             )
 
-            remaining_materials, matched_count = await self._match_materials_with_base(
-                db, remaining_materials, province_base_materials, auto_match_threshold, "province"
+            remaining_materials, matched_count, review_count = await self._match_materials_with_base(
+                db, remaining_materials, province_base_materials, "province"
             )
             province_matched = matched_count
-            logger.info(f"省级匹配完成，匹配 {province_matched} 个材料")
+            province_review = review_count
+            logger.info(f"省级匹配完成，匹配 {province_matched} 个材料，需复核 {province_review} 个")
 
         # 统计结果
         total_matched = district_matched + city_matched + province_matched
+        total_review = district_review + city_review + province_review
         unmatched_count = len(remaining_materials)
-        auto_matched = total_matched  # 所有匹配都是自动的
 
-        logger.info(f"三级匹配完成: 总计 {total_materials} 个材料, 匹配 {total_matched} 个, 未匹配 {unmatched_count} 个")
+        logger.info(f"三级匹配完成: 总计 {total_materials} 个材料, 匹配 {total_matched} 个, 需复核 {total_review} 个, 未匹配 {unmatched_count} 个")
         logger.info(f"匹配分布: 区县级 {district_matched}, 市级 {city_matched}, 省级 {province_matched}")
 
         # 更新项目统计
@@ -504,11 +602,12 @@ class MaterialMatchingService:
             'total_materials': total_materials,
             'matched_count': total_matched,
             'unmatched_count': unmatched_count,
+            'needs_review_count': total_review,
             'district_matched': district_matched,
             'city_matched': city_matched,
             'province_matched': province_matched,
-            'auto_matched': auto_matched,
-            'manual_review_required': manual_review_required
+            'auto_matched': total_matched,
+            'manual_review_required': total_review
         }
 
     async def _get_base_materials_by_region(
@@ -568,15 +667,24 @@ class MaterialMatchingService:
         db: AsyncSession,
         materials: List[ProjectMaterial],
         base_materials: List[Dict[str, Any]],
-        threshold: float,
         level: str
-    ) -> Tuple[List[ProjectMaterial], int]:
-        """将材料与基准材料进行匹配"""
+    ) -> Tuple[List[ProjectMaterial], int, int]:
+        """将材料与基准材料进行匹配
+        
+        匹配规则：
+        - 相似度 >= 0.85：已匹配（有信息价）
+        - 相似度 >= 0.65 且 < 0.85：需人工复核
+        - 相似度 < 0.65：未匹配（无信息价）
+        
+        Returns:
+            (remaining_materials, matched_count, review_count)
+        """
 
         if not base_materials:
-            return materials, 0
+            return materials, 0, 0
 
         matched_count = 0
+        review_count = 0
         remaining_materials = []
 
         for material in materials:
@@ -594,17 +702,45 @@ class MaterialMatchingService:
                 base_materials
             )
 
-            if match_result and match_result.similarity_score >= threshold:
-                # 更新匹配信息
-                material.is_matched = True
-                material.matched_material_id = match_result.base_material_id
-                material.match_score = match_result.similarity_score
-                material.match_method = f"hierarchical_{level}"
-
-                await db.commit()
-                matched_count += 1
-                logger.debug(f"材料 '{material.material_name}' 在 {level} 级匹配成功，相似度: {match_result.similarity_score:.3f}")
+            if match_result:
+                score = match_result.similarity_score
+                
+                # 相似度 >= 0.85：标记为已匹配
+                if score >= self.HIGH_MATCH_THRESHOLD:
+                    material.is_matched = True
+                    if hasattr(material, 'needs_review'):
+                        try:
+                            material.needs_review = False
+                        except Exception:
+                            pass
+                    material.matched_material_id = match_result.base_material_id
+                    material.match_score = score
+                    material.match_method = f"hierarchical_{level}"
+                    
+                    await db.commit()
+                    matched_count += 1
+                    logger.debug(f"材料 '{material.material_name}' 在 {level} 级匹配成功，相似度: {score:.3f}")
+                
+                # 相似度 >= 0.65 且 < 0.85：标记为需人工复核
+                elif score >= self.REVIEW_THRESHOLD:
+                    material.is_matched = False
+                    if hasattr(material, 'needs_review'):
+                        try:
+                            material.needs_review = True
+                        except Exception:
+                            pass
+                    material.matched_material_id = match_result.base_material_id
+                    material.match_score = score
+                    material.match_method = f"hierarchical_{level}_review"
+                    
+                    await db.commit()
+                    review_count += 1
+                    logger.debug(f"材料 '{material.material_name}' 在 {level} 级需人工复核，相似度: {score:.3f}")
+                
+                # 相似度 < 0.65：未匹配，继续下一级
+                else:
+                    remaining_materials.append(material)
             else:
                 remaining_materials.append(material)
 
-        return remaining_materials, matched_count
+        return remaining_materials, matched_count, review_count

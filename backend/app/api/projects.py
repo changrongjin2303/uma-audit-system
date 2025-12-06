@@ -533,6 +533,7 @@ async def get_project_materials(
     skip: int = 0,
     limit: int = 100,
     is_matched: Optional[bool] = None,
+    needs_review: Optional[bool] = None,
     is_problematic: Optional[bool] = None,
     keyword: Optional[str] = Query(None, description="材料名称/编码/规格关键词"),
     unit: Optional[str] = Query(None, description="单位过滤"),
@@ -540,7 +541,13 @@ async def get_project_materials(
     # # current_user: SimpleUser = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取项目材料列表"""
+    """获取项目材料列表
+    
+    筛选参数:
+    - is_matched: 是否已匹配（相似度>=0.85）
+    - needs_review: 是否需人工复核（相似度0.65-0.85）
+    - is_problematic: 是否有问题
+    """
     # 验证项目存在（开发环境跳过权限检查）
     project = await ProjectService.get_project_by_id(db, project_id)
     if not project:
@@ -564,6 +571,7 @@ async def get_project_materials(
         skip=calculated_skip,
         limit=calculated_limit,
         is_matched=is_matched,
+        needs_review=needs_review,
         is_problematic=is_problematic,
         keyword=keyword,
         unit=unit
@@ -580,6 +588,12 @@ async def get_project_materials(
     # 应用相同的过滤条件
     if is_matched is not None:
         count_stmt = count_stmt.where(ProjectMaterial.is_matched == is_matched)
+    # needs_review 字段可能不存在于旧数据库
+    if needs_review is not None and hasattr(ProjectMaterial, 'needs_review'):
+        try:
+            count_stmt = count_stmt.where(ProjectMaterial.needs_review == needs_review)
+        except Exception:
+            pass  # 字段不存在，忽略
     if is_problematic is not None:
         count_stmt = count_stmt.where(ProjectMaterial.is_problematic == is_problematic)
     

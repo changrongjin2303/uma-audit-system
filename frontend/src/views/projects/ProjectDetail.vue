@@ -268,10 +268,16 @@
                       已匹配 ({{ projectStats.matched_materials || 0 }})
                     </el-button>
                     <el-button
+                      :type="activeTab === 'needs_review' ? 'warning' : ''"
+                      @click="activeTab = 'needs_review'"
+                    >
+                      需人工复核 ({{ projectStats.needs_review_materials || 0 }})
+                    </el-button>
+                    <el-button
                       :type="activeTab === 'unmatched' ? 'primary' : ''"
                       @click="activeTab = 'unmatched'"
                     >
-                      未匹配/无信息价材料 ({{ (projectStats.total_materials || 0) - (projectStats.matched_materials || 0) }})
+                      未匹配/无信息价材料 ({{ projectStats.unpriced_materials || 0 }})
                     </el-button>
                   </el-button-group>
                   <el-button :icon="Refresh" @click="fetchMaterials" />
@@ -312,9 +318,10 @@
                     v-model="searchFilters.matchStatus"
                     placeholder="全部状态"
                     clearable
-                    style="width: 120px"
+                    style="width: 140px"
                   >
                     <el-option label="已匹配" value="matched" />
+                    <el-option label="需人工复核" value="needs_review" />
                     <el-option label="未匹配" value="unmatched" />
                   </el-select>
                 </el-form-item>
@@ -961,6 +968,8 @@ const projectStats = ref({
   total_materials: 0,
   analyzed_materials: 0,
   matched_materials: 0,
+  needs_review_materials: 0,
+  unpriced_materials: 0,
   progress: 0
 })
 const materials = ref([])
@@ -1134,12 +1143,23 @@ const fetchMaterials = async () => {
     if (searchFilters.unit) {
       params.unit = searchFilters.unit
     }
+    // 根据Tab或筛选条件设置匹配状态参数
     if (activeTab.value === 'matched') {
       params.is_matched = true
+    } else if (activeTab.value === 'needs_review') {
+      params.needs_review = true
     } else if (activeTab.value === 'unmatched') {
       params.is_matched = false
+      params.needs_review = false
     } else if (searchFilters.matchStatus) {
-      params.is_matched = searchFilters.matchStatus === 'matched'
+      if (searchFilters.matchStatus === 'matched') {
+        params.is_matched = true
+      } else if (searchFilters.matchStatus === 'needs_review') {
+        params.needs_review = true
+      } else if (searchFilters.matchStatus === 'unmatched') {
+        params.is_matched = false
+        params.needs_review = false
+      }
     }
     const response = await getProjectMaterials(route.params.id, params)
     console.log('获取项目材料数据响应:', response)

@@ -252,42 +252,75 @@ class ProjectService:
     
     @staticmethod
     async def get_project_stats(db: AsyncSession, project_id: int) -> Dict[str, int]:
-        """获取项目统计信息"""
+        """获取项目统计信息
+        
+        统计规则：
+        - matched_materials: 已匹配材料（相似度>=0.85）
+        - needs_review_materials: 需人工复核材料（相似度0.65-0.85）
+        - unpriced_materials: 无信息价材料（相似度<0.65或未匹配）
+        """
         from sqlalchemy import func, text
         
-        # 查询项目材料统计
-        result = await db.execute(
-            text("""
-                SELECT 
-                    COUNT(*) as total_materials,
-                    COUNT(CASE WHEN unit_price > 0 THEN 1 END) as priced_materials,
-                    COUNT(CASE WHEN unit_price = 0 OR unit_price IS NULL THEN 1 END) as unpriced_materials,
-                    COUNT(CASE WHEN is_problematic = true THEN 1 END) as problematic_materials,
-                    COUNT(CASE WHEN is_matched = true AND matched_material_id IS NOT NULL THEN 1 END) as matched_materials,
-                    COUNT(CASE WHEN is_analyzed = true THEN 1 END) as analyzed_materials
-                FROM project_materials 
-                WHERE project_id = :project_id
-            """),
-            {"project_id": project_id}
-        )
-        
-        row = result.fetchone()
-        if row:
-            return {
-                'total_materials': row.total_materials or 0,
-                'priced_materials': row.priced_materials or 0,
-                'unpriced_materials': row.unpriced_materials or 0,
-                'problematic_materials': row.problematic_materials or 0,
-                'matched_materials': row.matched_materials or 0,
-                'analyzed_materials': row.analyzed_materials or 0
-            }
+        try:
+            # 尝试使用包含 needs_review 字段的查询（新版本）
+            result = await db.execute(
+                text("""
+                    SELECT 
+                        COUNT(*) as total_materials,
+                        COUNT(CASE WHEN is_matched = true THEN 1 END) as matched_materials,
+                        COUNT(CASE WHEN needs_review = true AND is_matched = false THEN 1 END) as needs_review_materials,
+                        COUNT(CASE WHEN is_matched = false AND (needs_review = false OR needs_review IS NULL) THEN 1 END) as unpriced_materials,
+                        COUNT(CASE WHEN is_problematic = true THEN 1 END) as problematic_materials,
+                        COUNT(CASE WHEN is_analyzed = true THEN 1 END) as analyzed_materials
+                    FROM project_materials 
+                    WHERE project_id = :project_id
+                """),
+                {"project_id": project_id}
+            )
+            
+            row = result.fetchone()
+            if row:
+                return {
+                    'total_materials': row.total_materials or 0,
+                    'matched_materials': row.matched_materials or 0,
+                    'needs_review_materials': row.needs_review_materials or 0,
+                    'unpriced_materials': row.unpriced_materials or 0,
+                    'problematic_materials': row.problematic_materials or 0,
+                    'analyzed_materials': row.analyzed_materials or 0
+                }
+        except Exception:
+            # 回退到旧版本查询（不包含 needs_review 字段）
+            result = await db.execute(
+                text("""
+                    SELECT 
+                        COUNT(*) as total_materials,
+                        COUNT(CASE WHEN is_matched = true THEN 1 END) as matched_materials,
+                        COUNT(CASE WHEN is_matched = false THEN 1 END) as unpriced_materials,
+                        COUNT(CASE WHEN is_problematic = true THEN 1 END) as problematic_materials,
+                        COUNT(CASE WHEN is_analyzed = true THEN 1 END) as analyzed_materials
+                    FROM project_materials 
+                    WHERE project_id = :project_id
+                """),
+                {"project_id": project_id}
+            )
+            
+            row = result.fetchone()
+            if row:
+                return {
+                    'total_materials': row.total_materials or 0,
+                    'matched_materials': row.matched_materials or 0,
+                    'needs_review_materials': 0,  # 旧版本无此字段
+                    'unpriced_materials': row.unpriced_materials or 0,
+                    'problematic_materials': row.problematic_materials or 0,
+                    'analyzed_materials': row.analyzed_materials or 0
+                }
         
         return {
             'total_materials': 0,
-            'priced_materials': 0,
+            'matched_materials': 0,
+            'needs_review_materials': 0,
             'unpriced_materials': 0,
             'problematic_materials': 0,
-            'matched_materials': 0,
             'analyzed_materials': 0
         }
     
@@ -298,17 +331,32 @@ class ProjectService:
         skip: int = 0,
         limit: int = 100,
         is_matched: Optional[bool] = None,
+        needs_review: Optional[bool] = None,
         is_problematic: Optional[bool] = None,
         keyword: Optional[str] = None,
         unit: Optional[str] = None
     ) -> List[ProjectMaterial]:
-        """获取项目材料列表"""
+        """获取项目材料列表
+        
+        Args:
+            is_matched: 是否已匹配（相似度>=0.85）
+            needs_review: 是否需人工复核（相似度0.65-0.85）
+        """
         stmt = select(ProjectMaterial).where(
             ProjectMaterial.project_id == project_id
         )
         
         if is_matched is not None:
             stmt = stmt.where(ProjectMaterial.is_matched == is_matched)
+        
+        # needs_review 字段可能不存在于旧数据库，需要检查
+        if needs_review is not None:
+            try:
+                # 检查字段是否存在
+                if hasattr(ProjectMaterial, 'needs_review'):
+                    stmt = stmt.where(ProjectMaterial.needs_review == needs_review)
+            except Exception:
+                pass  # 字段不存在，忽略此过滤条件
         
         if is_problematic is not None:
             stmt = stmt.where(ProjectMaterial.is_problematic == is_problematic)
@@ -337,7 +385,13 @@ class ProjectService:
         db: AsyncSession, 
         project: Project
     ) -> Project:
-        """更新项目统计信息"""
+        """更新项目统计信息
+        
+        统计规则：
+        - priced_materials: 已匹配材料（相似度>=0.85）
+        - needs_review_materials: 需人工复核材料（相似度0.65-0.85）
+        - unpriced_materials: 无信息价材料（相似度<0.65或未匹配）
+        """
         # 统计材料数量
         total_stmt = select(func.count(ProjectMaterial.id)).where(
             ProjectMaterial.project_id == project.id
@@ -345,7 +399,7 @@ class ProjectService:
         total_result = await db.execute(total_stmt)
         project.total_materials = total_result.scalar() or 0
         
-        # 统计匹配的材料
+        # 统计已匹配的材料（相似度>=0.85）
         matched_stmt = select(func.count(ProjectMaterial.id)).where(
             and_(
                 ProjectMaterial.project_id == project.id,
@@ -355,8 +409,26 @@ class ProjectService:
         matched_result = await db.execute(matched_stmt)
         project.priced_materials = matched_result.scalar() or 0
         
-        # 统计未匹配的材料
-        project.unpriced_materials = project.total_materials - project.priced_materials
+        # 统计需人工复核的材料（相似度0.65-0.85）
+        # 注意：needs_review 字段可能不存在于旧数据库
+        needs_review_count = 0
+        try:
+            if hasattr(ProjectMaterial, 'needs_review') and hasattr(project, 'needs_review_materials'):
+                review_stmt = select(func.count(ProjectMaterial.id)).where(
+                    and_(
+                        ProjectMaterial.project_id == project.id,
+                        ProjectMaterial.needs_review == True,
+                        ProjectMaterial.is_matched == False
+                    )
+                )
+                review_result = await db.execute(review_stmt)
+                needs_review_count = review_result.scalar() or 0
+                project.needs_review_materials = needs_review_count
+        except Exception:
+            needs_review_count = 0
+        
+        # 统计无信息价材料（未匹配且不需要复核的）
+        project.unpriced_materials = project.total_materials - project.priced_materials - needs_review_count
         
         # 统计问题材料
         problematic_stmt = select(func.count(ProjectMaterial.id)).where(
