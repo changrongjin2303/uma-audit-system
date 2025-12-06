@@ -366,7 +366,7 @@ class MaterialMatchingService:
                     ProjectMaterial.is_matched == False
                 )
             )
-            result = await db.execute(stmt)
+        result = await db.execute(stmt)
         return result.scalars().all()
     
     async def _get_base_materials_for_matching(
