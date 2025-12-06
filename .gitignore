@@ -53,7 +53,8 @@ logs/
 # 上传文件
 uploads/
 temp/
-reports/
+/reports/
+backend/reports/
 
 # 数据库
 *.db
