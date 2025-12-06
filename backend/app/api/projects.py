@@ -199,11 +199,12 @@ async def get_project_stats(
         "project_id": project_id,
         "total_materials": stats.get('total_materials', 0),
         "priced_materials": stats.get('priced_materials', 0),
+        "needs_review_materials": stats.get('needs_review_materials', 0),  # 需人工复核材料
         "unpriced_materials": stats.get('unpriced_materials', 0),
         "problematic_materials": stats.get('problematic_materials', 0),
         "analyzed_materials": analyzed_materials,
-        "matched_materials": stats.get('matched_materials', 0),  # 正确使用matched_materials
-        "unmatched_materials": stats.get('total_materials', 0) - stats.get('matched_materials', 0)  # 未匹配 = 总数 - 已匹配
+        "matched_materials": stats.get('matched_materials', 0),
+        "unmatched_materials": stats.get('total_materials', 0) - stats.get('matched_materials', 0) - stats.get('needs_review_materials', 0)
     }
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
