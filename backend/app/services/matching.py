@@ -366,7 +366,7 @@ class MaterialMatchingService:
                     ProjectMaterial.is_matched == False
                 )
             )
-        result = await db.execute(stmt)
+            result = await db.execute(stmt)
         return result.scalars().all()
     
     async def _get_base_materials_for_matching(
@@ -716,7 +716,7 @@ class MaterialMatchingService:
                     material.matched_material_id = match_result.base_material_id
                     material.match_score = score
                     material.match_method = f"hierarchical_{level}"
-                    
+
                     await db.commit()
                     matched_count += 1
                     logger.debug(f"材料 '{material.material_name}' 在 {level} 级匹配成功，相似度: {score:.3f}")
