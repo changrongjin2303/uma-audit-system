@@ -203,14 +203,20 @@ async def get_analysis_results(
     
     # 验证状态参数
     analysis_status = None
+    indeterminate = False
+    
     if status:
-        try:
-            analysis_status = AnalysisStatus(status)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"无效的分析状态: {status}"
-            )
+        if status == 'indeterminate':
+            indeterminate = True
+            analysis_status = AnalysisStatus.COMPLETED
+        else:
+            try:
+                analysis_status = AnalysisStatus(status)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"无效的分析状态: {status}"
+                )
     
     try:
         analysis_service = PriceAnalysisService()
@@ -222,7 +228,8 @@ async def get_analysis_results(
             risk_level=risk_level,
             material_name=material_name,
             skip=skip,
-            limit=limit
+            limit=limit,
+            indeterminate=indeterminate
         )
         
         return {
@@ -493,6 +500,31 @@ async def get_projects_with_analysis_results(
             risk_result = await db.execute(risk_stmt)
             risk_count = risk_result.scalar()
             
+            # 获取无法判定(Indeterminate)的数量: status=COMPLETED and is_reasonable is None
+            indeterminate_stmt = select(func.count(PriceAnalysis.id)).select_from(
+                ProjectMaterial.__table__.join(
+                    PriceAnalysis, ProjectMaterial.id == PriceAnalysis.material_id
+                )
+            ).where(
+                ProjectMaterial.project_id == project.id,
+                PriceAnalysis.status == AnalysisStatus.COMPLETED,
+                PriceAnalysis.is_reasonable == None
+            )
+            indeterminate_result = await db.execute(indeterminate_stmt)
+            indeterminate_count = indeterminate_result.scalar()
+
+            # 获取失败(Failed)的数量: status=FAILED
+            failed_stmt = select(func.count(PriceAnalysis.id)).select_from(
+                ProjectMaterial.__table__.join(
+                    PriceAnalysis, ProjectMaterial.id == PriceAnalysis.material_id
+                )
+            ).where(
+                ProjectMaterial.project_id == project.id,
+                PriceAnalysis.status == AnalysisStatus.FAILED
+            )
+            failed_result = await db.execute(failed_stmt)
+            failed_count = failed_result.scalar()
+            
             formatted_projects.append({
                 "id": project.id,
                 "name": project.name,
@@ -502,6 +534,8 @@ async def get_projects_with_analysis_results(
                 "total_materials": total_materials,
                 "reasonable_count": reasonable_count or 0,
                 "risk_count": risk_count or 0,
+                "indeterminate_count": indeterminate_count or 0,
+                "failed_count": failed_count or 0,
                 "last_analyzed_at": project.last_analyzed_at.isoformat() if project.last_analyzed_at else None
             })
         

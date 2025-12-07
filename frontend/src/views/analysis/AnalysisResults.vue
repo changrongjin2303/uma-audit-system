@@ -146,6 +146,18 @@
             <span class="risk-count">{{ row.risk_count || 0 }}</span>
           </template>
         </el-table-column>
+
+        <el-table-column prop="indeterminate_count" label="无法判定" width="120">
+          <template #header>
+            <span>无法判定</span>
+            <el-tooltip content="已完成AI分析，但因缺少单价或AI未给出价格区间，无法判断合理性" placement="top">
+              <el-icon style="vertical-align: middle; margin-left: 4px"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span class="indeterminate-count">{{ row.indeterminate_count || 0 }}</span>
+          </template>
+        </el-table-column>
         
         <el-table-column prop="last_analyzed_at" label="最后分析时间" width="180">
           <template #default="{ row }">
@@ -342,7 +354,8 @@ import {
   Refresh,
   View,
   Edit,
-  Search
+  Search,
+  QuestionFilled
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
 import { getProjectAnalysisResults, getProjectAnalysisStatistics, getProjectsWithAnalysis } from '@/api/analysis'
@@ -437,6 +450,8 @@ const fetchProjects = async () => {
         total_materials: project.total_materials || 0,
         reasonable_count: project.reasonable_count || 0,
         risk_count: project.risk_count || 0,
+        indeterminate_count: project.indeterminate_count || 0,
+        failed_count: project.failed_count || 0,
         last_analyzed_at: project.last_analyzed_at
       }))
     } else {
@@ -726,6 +741,11 @@ onMounted(async () => {
 
   .risk-count {
     color: $color-danger;
+    font-weight: 600;
+  }
+
+  .indeterminate-count {
+    color: #909399;
     font-weight: 600;
   }
 

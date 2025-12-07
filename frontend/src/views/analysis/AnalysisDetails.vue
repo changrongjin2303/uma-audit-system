@@ -169,6 +169,7 @@
               <el-option label="分析中" value="processing" />
               <el-option label="待分析" value="pending" />
               <el-option label="失败" value="failed" />
+              <el-option label="无法判定" value="indeterminate" />
             </el-select>
             <el-select
               v-model="filterRisk"

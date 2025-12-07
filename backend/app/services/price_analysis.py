@@ -160,7 +160,8 @@ class PriceAnalysisService:
         risk_level: Optional[str] = None,
         material_name: Optional[str] = None,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        indeterminate: bool = False
     ) -> List[Dict[str, Any]]:
         """获取分析结果"""
 
@@ -175,8 +176,13 @@ class PriceAnalysisService:
 
         if status:
             base_stmt = base_stmt.where(PriceAnalysis.status == status)
-        if is_reasonable is not None:
+        
+        # 处理无法判定(Indeterminate)的逻辑
+        if indeterminate:
+            base_stmt = base_stmt.where(PriceAnalysis.is_reasonable == None)
+        elif is_reasonable is not None:
             base_stmt = base_stmt.where(PriceAnalysis.is_reasonable == is_reasonable)
+            
         if material_name:
             base_stmt = base_stmt.where(ProjectMaterial.material_name.ilike(f"%{material_name}%"))
 
