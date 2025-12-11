@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y \
 # 复制requirements文件
 COPY requirements.txt .
 
+# 优先安装 CPU 版 PyTorch 以减小镜像体积 (避免下载 900MB+ 的 CUDA 版)
+RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
 # 安装Python依赖 (使用清华镜像源)
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
