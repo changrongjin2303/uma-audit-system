@@ -46,6 +46,9 @@ services:
   # 后端API服务
   backend:
     image: uma-audit5-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: uma_audit_backend
     ports:
       - "8000:8000"
@@ -71,6 +74,9 @@ services:
   # 前端服务
   frontend:
     image: uma-audit5-frontend:latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: uma_audit_frontend
     ports:
       - "80:80"

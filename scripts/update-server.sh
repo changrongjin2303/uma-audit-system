@@ -22,7 +22,9 @@ if [ -f docker-compose.prod.yml.backup ]; then
 fi
 
 echo "🔄 重启后端服务..."
-docker-compose -f docker-compose.prod.yml restart backend
+# docker-compose -f docker-compose.prod.yml restart backend
+# 使用 --build 确保重建镜像
+docker-compose -f docker-compose.prod.yml up -d --build backend
 
 echo ""
 echo "✅ 更新完成！"
