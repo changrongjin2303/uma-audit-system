@@ -3,6 +3,10 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
+# 设置 npm 镜像和 Alpine 镜像
+RUN npm config set registry https://registry.npmmirror.com && \
+    sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
 # 复制package文件
 COPY package*.json ./
 
