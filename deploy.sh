@@ -103,7 +103,7 @@ else
     echo -e "${YELLOW}🔄 第4步：重启后端服务...${NC}"
 fi
 
-sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "cd $PROJECT_DIR && docker-compose up -d --build backend"
+sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "docker restart uma_audit_backend"
 
 echo -e "${GREEN}✅ 后端重启完成${NC}"
 
@@ -112,7 +112,7 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     echo ""
     echo -e "${YELLOW}🎨 第6步：重启前端服务...${NC}"
     
-    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "cd $PROJECT_DIR && docker-compose up -d --build frontend"
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "docker restart uma_audit_frontend"
     
     echo -e "${GREEN}✅ 前端重启完成${NC}"
 fi

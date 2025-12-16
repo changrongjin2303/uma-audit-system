@@ -103,7 +103,7 @@ class AIServiceBase(ABC):
 
 材料信息：
 - 名称：{material_name}
-- 规格：{specification or '未指定'}
+- 规格：{specification or '未指定'}（可能名称中包含规格信息）
 - 单位：{unit}
 - 重点地区：{region}（若样本不足，可扩展至相邻省份或全国，并在说明中写明原因）
 - 分析时点：{analysis_date}
