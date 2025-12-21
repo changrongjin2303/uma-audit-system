@@ -112,7 +112,21 @@ class ProjectService:
         project_type: Optional[str] = None
     ) -> List[Project]:
         """获取项目列表"""
-        stmt = select(Project)
+        from app.models.analysis import PriceAnalysis, AnalysisStatus
+        
+        # 基础查询，选择项目和关联的已完成分析数量
+        stmt = select(
+            Project,
+            func.count(PriceAnalysis.id).label('analysis_count')
+        ).outerjoin(
+            ProjectMaterial, Project.id == ProjectMaterial.project_id
+        ).outerjoin(
+            PriceAnalysis, 
+            and_(
+                ProjectMaterial.id == PriceAnalysis.material_id,
+                PriceAnalysis.status == AnalysisStatus.COMPLETED
+            )
+        )
         
         # 权限过滤
         if hasattr(user, 'role'):
@@ -139,9 +153,16 @@ class ProjectService:
                 )
             )
         
-        stmt = stmt.offset(skip).limit(limit).order_by(Project.created_at.desc())
+        stmt = stmt.group_by(Project.id).offset(skip).limit(limit).order_by(Project.created_at.desc())
+        
         result = await db.execute(stmt)
-        return result.scalars().all()
+        # 将 analysis_count 附加到 Project 对象上，以便 schema 可以读取
+        projects_with_counts = []
+        for project, count in result.all():
+            project.analysis_count = count
+            projects_with_counts.append(project)
+            
+        return projects_with_counts
     
     @staticmethod
     async def get_projects_count(

@@ -124,6 +124,7 @@ class ProjectResponse(ProjectBase):
     priced_materials: int
     unpriced_materials: int
     problematic_materials: int
+    analysis_count: Optional[int] = 0
     created_at: datetime
     updated_at: datetime
     processed_at: Optional[datetime] = None

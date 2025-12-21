@@ -141,9 +141,9 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="priced_materials" label="已分析" width="100" align="center">
+        <el-table-column prop="analysis_count" label="已分析" width="100" align="center">
           <template #default="{ row }">
-            {{ row.priced_materials || 0 }}
+            {{ row.analysis_count || 0 }}
           </template>
         </el-table-column>
 
