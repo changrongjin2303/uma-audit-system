@@ -779,6 +779,11 @@ const handlePageChange = (page) => {
 }
 
 // 选择处理
+const onTableSelectionChange = (selection) => {
+  handleSelectionChange(selection, reports.value)
+  selectedReports.value = selection
+}
+
 const handleSelectionChangeLocal = (selection) => {
   selectedReports.value = selection
 }

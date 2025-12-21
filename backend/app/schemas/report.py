@@ -92,3 +92,7 @@ class ReportPreviewResponse(BaseModel):
     sample_problematic_materials: List[Dict[str, Any]]
     analysis_materials: Optional[List[Dict[str, Any]]] = None
     guidance_price_materials: Optional[List[Dict[str, Any]]] = None
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除请求"""
+    report_ids: List[int]

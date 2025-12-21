@@ -9,7 +9,7 @@ from app.models.user import User
 from app.services.report_service import ReportService
 from app.schemas.report import (
     ReportGenerationRequest, ReportResponse, ReportListResponse,
-    ReportPreviewResponse, ReportConfigSchema
+    ReportPreviewResponse, ReportConfigSchema, BatchDeleteRequest
 )
 from sqlalchemy import select
 from app.models.analysis import AuditReport
@@ -144,6 +144,20 @@ async def delete_report(
         return {"message": "报告删除成功"}
     else:
         raise HTTPException(status_code=500, detail="删除失败")
+
+
+@router.post("/batch-delete/")
+async def batch_delete_reports(
+    request: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: SimpleUser = Depends(get_current_active_user)
+):
+    """批量删除报告"""
+    return await report_service.batch_delete_reports(
+        db=db,
+        report_ids=request.report_ids,
+        user_id=current_user.id
+    )
 
 
 @router.post("/batch-generate")

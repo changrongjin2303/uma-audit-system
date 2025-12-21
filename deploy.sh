@@ -83,6 +83,36 @@ fi
 git push origin main
 echo -e "${GREEN}✅ 推送完成${NC}"
 
+# ============ 第3.5步：上传前端构建文件（如果需要） ============
+if [ "$UPDATE_FRONTEND" = true ]; then
+    echo ""
+    echo -e "${YELLOW}📤 第3.5步：上传前端构建文件到服务器...${NC}"
+    
+    # 进入前端目录并压缩dist
+    cd frontend
+    if [ ! -d "dist" ]; then
+        echo -e "${RED}❌ 错误：dist 目录不存在，请先构建前端${NC}"
+        exit 1
+    fi
+    
+    echo "压缩 dist 目录..."
+    tar -czf dist.tar.gz dist
+    
+    # 上传到服务器
+    echo "上传到服务器..."
+    sshpass -p "$SERVER_PASSWORD" scp -o StrictHostKeyChecking=no dist.tar.gz $SERVER:$PROJECT_DIR/frontend/
+    
+    # 清理本地压缩包
+    rm dist.tar.gz
+    cd ..
+    
+    # 在服务器上解压
+    echo "在服务器上解压..."
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "cd $PROJECT_DIR/frontend && rm -rf dist && tar -xzf dist.tar.gz && rm dist.tar.gz"
+    
+    echo -e "${GREEN}✅ 前端文件上传完成${NC}"
+fi
+
 # ============ 第4步：服务器拉取代码 ============
 echo ""
 if [ "$UPDATE_FRONTEND" = true ]; then

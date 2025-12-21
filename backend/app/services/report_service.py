@@ -376,6 +376,48 @@ class ReportService:
         except Exception as e:
             logger.error(f"删除报告失败: {e}")
             raise HTTPException(status_code=500, detail="删除报告失败")
+
+    async def batch_delete_reports(
+        self,
+        db: AsyncSession,
+        report_ids: List[int],
+        user_id: int
+    ) -> Dict[str, Any]:
+        """批量删除报告"""
+        try:
+            # 获取所有要删除的报告
+            query = select(AuditReport).where(AuditReport.id.in_(report_ids))
+            result = await db.execute(query)
+            reports = result.scalars().all()
+            
+            if not reports:
+                return {"success": True, "count": 0}
+            
+            deleted_count = 0
+            for report in reports:
+                # 删除文件
+                if report.report_file_path and os.path.exists(report.report_file_path):
+                    try:
+                        os.remove(report.report_file_path)
+                    except Exception as e:
+                        logger.warning(f"删除报告文件失败: {e}")
+                
+                # 删除数据库记录
+                await db.delete(report)
+                deleted_count += 1
+            
+            await db.commit()
+            
+            logger.info(f"批量删除报告成功: {deleted_count}个")
+            return {
+                "success": True, 
+                "count": deleted_count,
+                "requested_count": len(report_ids)
+            }
+            
+        except Exception as e:
+            logger.error(f"批量删除报告失败: {e}")
+            raise HTTPException(status_code=500, detail=f"批量删除报告失败: {str(e)}")
     
     async def _get_project(self, db: AsyncSession, project_id: int) -> Optional[Project]:
         """获取项目信息"""
