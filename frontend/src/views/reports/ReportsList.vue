@@ -128,7 +128,7 @@
             <el-button type="danger" :icon="Delete" @click="handleBatchDelete">
               批量删除 ({{ selectedCount }})
             </el-button>
-            <el-button type="warning" :icon="FolderAdd" @click="handleBatchArchive">批量归档</el-button>
+            <el-button type="primary" :icon="Download" @click="handleBatchDownload">批量下载</el-button>
             <el-button type="success" :icon="Share" @click="handleBatchShare">批量分享</el-button>
             <el-divider direction="vertical" />
             <el-switch
@@ -500,15 +500,19 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 隐藏的图表生成器 -->
+    <HiddenChartGenerator ref="hiddenChartGeneratorRef" />
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted, nextTick, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSelectionAcrossPages } from '@/composables/useSelectionAcrossPages'
 import BasePagination from '@/components/BasePagination.vue'
+import HiddenChartGenerator from '@/components/analysis/HiddenChartGenerator.vue'
 import {
   Plus,
   Document,
@@ -534,10 +538,12 @@ import {
   shareReport,
   updateReport,
   downloadReport as downloadReportFile,
-  regenerateReport
+  regenerateReport,
+  generateReport
 } from '@/api/reports'
 
 const router = useRouter()
+const route = useRoute()
 
 // 响应式数据
 const loading = ref(false)
@@ -550,6 +556,7 @@ const viewMode = ref('table')
 const reports = ref([])
 const selectedReports = ref([])
 const tableRef = ref()
+const hiddenChartGeneratorRef = ref(null)
 const {
   allSelected,
   selectedIds: selectedReportIds,
@@ -698,6 +705,7 @@ const fetchReports = async () => {
 // 状态相关方法
 const getStatusType = (status) => {
   const typeMap = {
+    'pending': 'info',
     'generating': 'warning',
     'completed': 'success',
     'failed': 'danger',
@@ -708,6 +716,7 @@ const getStatusType = (status) => {
 
 const getStatusText = (status) => {
   const textMap = {
+    'pending': '待生成',
     'generating': '生成中',
     'completed': '已完成',
     'failed': '生成失败',
@@ -1002,8 +1011,144 @@ const handleBatchDelete = async () => {
   }
 }
 
-const handleBatchArchive = () => {
-  ElMessage.info('批量归档功能开发中...')
+const handleBatchDownload = async () => {
+  if (selectedCount.value === 0) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要批量下载选中的 ${selectedCount.value} 个报告吗？\n对于尚未生成的报告，系统将自动尝试生成 Word 版本（可能不包含最新图表）。`,
+      '批量下载确认',
+      {
+        confirmButtonText: '开始下载',
+        cancelButtonText: '取消',
+        type: 'info'
+      }
+    )
+
+    // 获取所有选中的报告ID
+    const fetchAllIds = async () => {
+      const ids = []
+      const size = 1000
+      let page = 1
+      while (true) {
+        const resp = await getReportsList({
+          page,
+          size,
+          ...searchForm
+        })
+        const data = resp.data || resp
+        const list = data.reports || data.items || []
+        list.forEach(r => ids.push(r.report_id ?? r.id))
+        const total = data.total || 0
+        if (page * size >= total || list.length < size) break
+        page += 1
+      }
+      return ids
+    }
+
+    // 这里我们需要获取完整的报告对象，而不仅仅是ID，因为我们需要检查状态
+    // 但为了简化，我们可以只处理当前页选中的，或者重新获取详情
+    // 简单起见，我们先只支持当前页选中的批量下载，或者通过ID逐个处理
+    
+    // 获取选中的ID列表
+    const ids = await getSelectedIds(fetchAllIds)
+    
+    if (ids.length === 0) return
+
+    ElMessage.info('开始处理批量下载...')
+    
+    let successCount = 0
+    let failCount = 0
+
+    // 逐个处理
+    for (const id of ids) {
+      try {
+        // 1. 获取报告详情以检查状态
+        // 优化：如果在当前列表里能找到，直接用；否则可能需要调API查状态
+        // 这里简单处理：直接尝试下载。如果失败（比如是草稿），再尝试生成
+        
+        // 我们先尝试直接调用下载接口，如果后端支持自动生成最好
+        // 但目前 downloadReportFile 只是下载文件
+        
+        // 查找当前列表中的对象（如果是跨页全选，可能找不到对象，只有ID）
+        const reportInList = reports.value.find(r => r.id === id)
+        let status = reportInList ? reportInList.status : 'unknown'
+        
+        // 如果状态未知或为pending/failed，尝试生成
+        if (status === 'pending' || status === 'failed' || status === 'unknown') {
+           // 尝试生成（不带图表，因为列表页无法截取图表）
+           console.log(`报告 ${id} 需要生成...`)
+           // 注意：generateReport 需要 project_id 等参数。
+           // 如果我们只有ID，我们可能需要先获取详情。
+           // 这里简化逻辑：对于 pending 状态的，我们尝试调用 generateReport 接口进行更新生成
+           // 但 generateReport 需要 project_id。
+           
+           // 如果是跨页全选，我们可能缺少必要信息。
+           // 建议：仅对当前页选中的有效，或者后端提供根据 report_id 自动生成的接口
+           
+           // 这里做个折衷：如果能找到 reportInList 且有 project_id，则尝试生成
+           if (reportInList && reportInList.project_id) {
+             let chartImages = null
+             if (hiddenChartGeneratorRef.value) {
+               try {
+                 // 生成图表截图
+                 chartImages = await hiddenChartGeneratorRef.value.generateImages(reportInList.project_id)
+                 if (chartImages) {
+                   console.log(`报告 ${id} 图表生成成功:`, Object.keys(chartImages))
+                 } else {
+                   console.warn(`报告 ${id} 图表生成返回空`)
+                 }
+               } catch (e) {
+                 console.error(`报告 ${id} 图表生成失败:`, e)
+               }
+             } else {
+               console.warn('hiddenChartGeneratorRef 未就绪')
+             }
+
+             await generateReport({
+               project_id: reportInList.project_id,
+               report_id: id,
+               report_title: reportInList.title,
+               report_type: reportInList.type,
+               chart_images: chartImages,
+               config: {
+                 include_charts: !!chartImages
+               }
+             })
+             // 等待一小会儿确保文件写入
+             await new Promise(resolve => setTimeout(resolve, 1000))
+           }
+        }
+        
+        // 2. 下载
+        await downloadReportFile(id)
+        successCount++
+        
+        // 浏览器限制：稍微延迟一下避免被拦截
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+      } catch (err) {
+        console.error(`报告 ${id} 下载失败:`, err)
+        failCount++
+      }
+    }
+    
+    if (failCount > 0) {
+      ElMessage.warning(`下载完成: ${successCount} 个成功, ${failCount} 个失败`)
+    } else {
+      ElMessage.success(`成功下载 ${successCount} 个报告`)
+    }
+    
+    // 刷新列表以更新状态
+    fetchReports()
+    clearAllSelection()
+    
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('批量下载失败')
+      console.error(error)
+    }
+  }
 }
 
 const handleBatchShare = () => {
@@ -1014,6 +1159,16 @@ const handleBatchShare = () => {
 onMounted(() => {
   fetchReports()
 })
+
+// 监听路由变化，如果从其他页面（如批量生成）跳转过来，自动刷新
+watch(
+  () => route.path,
+  (newPath) => {
+    if (newPath === '/reports') {
+      fetchReports()
+    }
+  }
+)
 </script>
 
 <style lang="scss" scoped>

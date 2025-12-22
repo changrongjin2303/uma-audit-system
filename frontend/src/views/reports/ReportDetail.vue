@@ -81,12 +81,17 @@ const router = useRouter()
 
 const reportId = Number(route.params.id)
 const projectId = route.query.project_id ? Number(route.query.project_id) : null
+const currentProjectId = ref(projectId)
 
 // 顶部信息
 const title = ref('造价材料分析报告')
 const projectName = ref('')
 const createTime = ref(new Date().toLocaleString())
 const auditor = ref('系统')
+
+// 读取配置参数
+const reportType = ref(route.query.report_type || 'audit')
+const reportIncludes = ref(route.query.includes ? route.query.includes.split(',') : [])
 
 // 预览数据
 const statistics = ref(null)
@@ -409,6 +414,7 @@ const loadPreview = async () => {
     }
     // 兼容 response 数据结构
     const res = data.data || data
+    currentProjectId.value = res.project_id || currentProjectId.value
     projectName.value = res.project_name || projectName.value
     statistics.value = res.statistics || null
     analysisTableData.value = res.analysis_materials || res.materials || []
@@ -424,36 +430,42 @@ const loadPreview = async () => {
 const onDownload = async () => {
   downloading.value = true
   try {
-    if (projectId) {
-      // 通过项目预览的页面，需要先生成报告再下载
+    // 如果已有有效的报告ID，尝试更新并下载（即重新生成但不创建新记录）
+    if (reportId && reportId > 0) {
+      ElMessage.info('正在更新报告内容，请稍候...')
       
-      // 1. 截取图表
-      ElMessage.info('正在截取图表，请稍候...')
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // 1. 截取图表 (确保下载的是最新的图表)
       const chartImages = await captureCharts()
-
-      // 2. 生成报告
-      ElMessage.info('正在生成报告，请稍候...')
-      const generateResult = await generateReport({
-        project_id: projectId,
-        report_title: title.value,
-        report_type: 'audit',
-        include_charts: true,
-        include_problematic_materials: true,
-        chart_images: chartImages
-      })
       
-      console.log('生成报告结果:', generateResult)
-      if (generateResult && generateResult.report_id) {
-        await downloadReport(generateResult.report_id)
-        ElMessage.success('报告下载成功')
-      } else if (generateResult.data && generateResult.data.report_id) {
-        await downloadReport(generateResult.data.report_id)
-        ElMessage.success('报告下载成功')
-      } else {
-        console.error('报告生成返回数据异常:', generateResult)
-        throw new Error('报告生成失败：无法获取报告ID')
+      // 2. 调用生成接口，但传入 report_id 以触发更新逻辑
+      // 注意：这里我们需要 projectId。如果页面加载时没有 projectId，需要从详情数据中获取
+      // loadPreview() 中已经设置了 projectId.value
+      
+      const updateParams = {
+        project_id: currentProjectId.value, // 确保有项目ID
+        report_title: title.value,
+        report_type: reportType.value, // 使用配置的类型
+        config: {
+          include_charts: reportIncludes.value.length > 0 ? reportIncludes.value.includes('charts') : true,
+          include_detailed_analysis: reportIncludes.value.length > 0 ? reportIncludes.value.includes('details') : true,
+          include_recommendations: reportIncludes.value.length > 0 ? reportIncludes.value.includes('suggestions') : true,
+          include_appendices: reportIncludes.value.length > 0 ? reportIncludes.value.includes('attachments') : true
+        },
+        chart_images: chartImages,
+        report_id: reportId // 关键：传入报告ID进行更新
       }
+      
+      console.log('正在请求更新报告:', updateParams)
+      
+      const generateResult = await generateReport(updateParams)
+      
+      if (generateResult) {
+         ElMessage.success('报告更新成功，正在下载...')
+         await downloadReport(reportId)
+      } else {
+         throw new Error('报告更新失败')
+      }
+      
     } else {
       // 已有报告ID的情况，直接下载
       await downloadReport(reportId)

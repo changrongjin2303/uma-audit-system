@@ -34,7 +34,9 @@ async def generate_report(
             report_title=request.report_title,
             config=request.config,
             include_materials=request.include_materials,
-            chart_images=request.chart_images
+            chart_images=request.chart_images,
+            report_id=request.report_id,
+            is_draft=request.is_draft
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成报告失败: {str(e)}")

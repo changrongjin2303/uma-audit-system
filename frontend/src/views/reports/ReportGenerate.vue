@@ -45,7 +45,7 @@
         
         <el-form-item>
           <el-button type="primary" @click="generateReport" :loading="generating">
-            生成报告
+            预览并生成
           </el-button>
           <el-button @click="resetForm">重置</el-button>
         </el-form-item>
@@ -56,8 +56,6 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { generateReport as generateReportApi } from '@/api/reports'
 import { getProjectsList } from '@/api/projects'
 
@@ -85,10 +83,11 @@ const generateReport = async () => {
   generating.value = true
   
   try {
-    // 调用真实的报告生成API
+    // 1. 先创建报告草稿记录
     const response = await generateReportApi({
       project_id: parseInt(reportForm.value.projectId),
-      report_title: `${reportForm.value.projectId} - 分析报告`,
+      report_title: `${reportForm.value.projectId} - 分析报告`, // 这里可能需要更好的标题逻辑
+      is_draft: true, // 关键：标记为草稿，仅创建记录
       config: {
         report_type: reportForm.value.type,
         include_charts: reportForm.value.includes.includes('charts'),
@@ -98,14 +97,29 @@ const generateReport = async () => {
       }
     })
     
-    ElMessage.success(`报告生成成功！报告ID: ${response.report_id}`)
+    // 2. 获取到新创建的 report_id
+    const newReportId = response.report_id || response.data?.report_id
     
-    // 跳转到报告列表页面
-    await router.push('/reports')
+    if (!newReportId) {
+      throw new Error('无法获取新生成的报告ID')
+    }
+    
+    ElMessage.success('报告记录已创建，正在跳转预览...')
+    
+    // 3. 跳转到详情页，传入真实的 report_id
+    await router.push({
+      name: 'ReportDetail',
+      params: { id: newReportId },
+      query: {
+        project_id: reportForm.value.projectId, // 仍然保留 project_id 以备不时之需
+        report_type: reportForm.value.type,
+        includes: reportForm.value.includes.join(',')
+      }
+    })
+    
   } catch (error) {
-    console.error('报告生成失败:', error)
-    const errorMsg = error.response?.data?.detail || error.message || '报告生成失败'
-    ElMessage.error(errorMsg)
+    console.error('创建报告记录失败:', error)
+    ElMessage.error('创建报告记录失败: ' + (error.message || '未知错误'))
   } finally {
     generating.value = false
   }

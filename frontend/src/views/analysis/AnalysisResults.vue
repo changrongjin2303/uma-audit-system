@@ -545,6 +545,7 @@ const batchGenerateReports = async () => {
         await generateReport({
           project_id: project.id,
           report_title: `${project.name} - 价格分析报告`,
+          is_draft: true, // 使用草稿模式，先生成记录
           config: {
             report_type: "price_analysis",
             include_charts: true,
@@ -563,13 +564,13 @@ const batchGenerateReports = async () => {
     loadingInstance.close()
 
     if (failCount === 0) {
-      ElMessage.success(`成功生成 ${successCount} 个报告`)
+      ElMessage.success(`成功生成 ${successCount} 个报告记录，请前往报告列表查看和下载`)
     } else {
       ElMessage.warning(`报告生成完成：成功 ${successCount} 个，失败 ${failCount} 个`)
     }
     
-    // 可选：跳转到报告列表页查看结果
-    // router.push('/reports')
+    // 跳转到报告列表页查看结果
+    router.push('/reports')
     
   } catch (error) {
     if (error !== 'cancel') {

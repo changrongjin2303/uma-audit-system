@@ -35,7 +35,9 @@ class ReportService:
         report_title: Optional[str] = None,
         config: Optional[ReportConfigSchema] = None,
         include_materials: Optional[List[int]] = None,
-        chart_images: Optional[Dict[str, str]] = None
+        chart_images: Optional[Dict[str, str]] = None,
+        report_id: Optional[int] = None,
+        is_draft: bool = False
     ) -> ReportResponse:
         """生成审计报告"""
         try:
@@ -68,20 +70,58 @@ class ReportService:
             if not report_title:
                 report_title = f"{project.name} - 造价材料审计报告"
             
-            # 创建报告记录
-            audit_report = AuditReport(
-                project_id=project_id,
-                report_title=report_title,
-                report_type=config.report_type.value,
-                total_materials_count=len(materials),
-                problematic_materials_count=len([m for m in materials if m.is_problematic]),
-                generated_by=user_id,
-                is_final=False
-            )
+            # 检查是否更新现有报告
+            audit_report = None
+            if report_id:
+                # 尝试获取现有报告
+                from sqlalchemy import select
+                result = await db.execute(select(AuditReport).where(AuditReport.id == report_id))
+                audit_report = result.scalar_one_or_none()
+                
+                if audit_report:
+                    logger.info(f"更新现有报告: {report_id}")
+                    # 更新基本信息
+                    audit_report.report_title = report_title
+                    audit_report.report_type = config.report_type.value
+                    audit_report.total_materials_count = len(materials)
+                    audit_report.problematic_materials_count = len([m for m in materials if m.is_problematic])
+                    audit_report.generated_by = user_id
+                    # generated_by 是否需要更新取决于业务需求，这里假设重新生成的人即为最后修改人
+                else:
+                    logger.warning(f"未找到ID为{report_id}的报告，将创建新报告")
             
-            db.add(audit_report)
+            # 如果没有找到现有报告，创建新记录
+            if not audit_report:
+                audit_report = AuditReport(
+                    project_id=project_id,
+                    report_title=report_title,
+                    report_type=config.report_type.value,
+                    total_materials_count=len(materials),
+                    problematic_materials_count=len([m for m in materials if m.is_problematic]),
+                    generated_by=user_id,
+                    is_final=False
+                )
+                db.add(audit_report)
+            
             await db.commit()
             await db.refresh(audit_report)
+            
+            # 如果是草稿模式，直接返回，不生成文件
+            if is_draft:
+                logger.info(f"生成报告草稿: {audit_report.id}")
+                return ReportResponse(
+                    report_id=audit_report.id,
+                    project_id=project_id,
+                    report_title=report_title,
+                    project_name=project.name,
+                    report_type=ReportType(config.report_type),
+                    status=ReportStatus.GENERATING,  # 标记为生成中或草稿
+                    file_path=None,
+                    file_size=None,
+                    generation_time=None,
+                    created_at=audit_report.created_at,
+                    download_url=None
+                )
             
             # 生成报告文件
             try:
@@ -212,7 +252,13 @@ class ReportService:
 
             report_responses = []
             for report in reports:
-                status = ReportStatus.COMPLETED if report.report_file_path else ReportStatus.FAILED
+                if report.report_file_path:
+                    status = ReportStatus.COMPLETED
+                elif report.report_filename == "生成失败":
+                    status = ReportStatus.FAILED
+                else:
+                    status = ReportStatus.PENDING
+
                 project_name = project_names.get(report.project_id)
                 display_title = build_display_title(report.report_title, project_name, report.project_id)
 
@@ -300,6 +346,7 @@ class ReportService:
             guidance_price_materials = await self._generate_guidance_price_materials_data(db, project_id, materials, analyses)
             
             return ReportPreviewResponse(
+                project_id=project.id,
                 project_name=project.name,
                 statistics=ReportStatistics(**stats),
                 chart_data=chart_data,

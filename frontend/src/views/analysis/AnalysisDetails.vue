@@ -33,6 +33,7 @@
           type="primary"
           :icon="Document"
           @click="generateReport"
+          :loading="generatingReport"
         >
           生成报告
         </el-button>
@@ -912,6 +913,7 @@ import { formatAnalysisDataSources, getDataSourceNote } from '@/utils/dataSource
 import { useSelectionAcrossPages } from '@/composables/useSelectionAcrossPages'
 import { getProjectAnalysisResults, getProjectPricedMaterialsAnalysis, batchAnalyzeMaterials, analyzePricedMaterials, getProjectAnalysisStatistics, deleteMaterialAnalysis, getMaterialAnalysisDetail } from '@/api/analysis'
 import { deleteProjectMaterial, batchDeleteProjectMaterials, getProjectMaterials } from '@/api/projects'
+import { generateReport as generateReportApi } from '@/api/reports'
 import { useAnalysisStore } from '@/store/analysis'
 
 // 格式化数字，去除末尾的0，不使用千分位逗号
@@ -929,6 +931,7 @@ const route = useRoute()
 
 // 响应式数据
 const loading = ref(false)
+const generatingReport = ref(false)
 const adjusting = ref(false)
 const showDetailDialog = ref(false)
 const showTestDialog = ref(false)
@@ -1595,8 +1598,80 @@ const startPricedAnalysis = async () => {
   }
 }
 
-const generateReport = () => {
-  router.push(`/reports/generate?project_id=${route.query.project_id}&type=analysis`)
+const generateReport = async () => {
+  console.log('generateReport clicked')
+  
+  // 尝试多种方式获取 project_id
+  let projectId = route.query.project_id
+  if (!projectId && currentProject.value) {
+    projectId = currentProject.value.id
+  }
+  
+  console.log('Project ID resolved:', projectId)
+
+  if (!projectId) {
+    ElMessage.warning('无法获取项目ID，请刷新页面重试')
+    console.warn('Missing project_id')
+    return
+  }
+  
+  generatingReport.value = true
+  console.log('generatingReport set to true')
+  
+  try {
+    const pId = parseInt(projectId)
+    const projectName = currentProject.value?.name || `项目${pId}`
+    
+    console.log('Calling API with:', { project_id: pId, report_title: `${projectName} - 分析报告` })
+
+    // 1. 先创建报告草稿记录
+    const response = await generateReportApi({
+      project_id: pId,
+      report_title: `${projectName} - 分析报告`,
+      is_draft: true, // 关键：标记为草稿，仅创建记录
+      config: {
+        report_type: 'comprehensive', // 默认为完整报告
+        include_charts: true,
+        include_detailed_analysis: true,
+        include_recommendations: true,
+        include_appendices: true
+      }
+    })
+    
+    console.log('API Response:', response)
+
+    // 2. 获取到新创建的 report_id
+    // 兼容后端可能返回的不同结构
+    const newReportId = response.report_id || response.data?.report_id || response.id || response.data?.id
+    
+    if (!newReportId) {
+      console.error('Invalid response structure:', response)
+      throw new Error('无法获取新生成的报告ID')
+    }
+    
+    console.log('New Report ID:', newReportId)
+    
+    ElMessage.success('报告记录已创建，正在跳转预览...')
+    
+    // 3. 跳转到详情页，传入真实的 report_id
+    await router.push({
+      name: 'ReportDetail',
+      params: { id: newReportId },
+      query: {
+        project_id: pId,
+        report_type: 'comprehensive',
+        includes: 'charts,details,suggestions,attachments'
+      }
+    })
+    console.log('Router push called')
+    
+  } catch (error) {
+    console.error('创建报告记录失败:', error)
+    ElMessage.error('创建报告记录失败: ' + (error.message || '未知错误'))
+  } finally {
+    generatingReport.value = false
+    console.log('generatingReport set to false')
+  }
 }
 
 // 切换分析类型

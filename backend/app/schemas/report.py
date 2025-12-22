@@ -14,6 +14,7 @@ class ReportType(str, Enum):
 
 class ReportStatus(str, Enum):
     """报告状态枚举"""
+    PENDING = "pending"
     GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -37,6 +38,9 @@ class ReportGenerationRequest(BaseModel):
     config: Optional[ReportConfigSchema] = Field(default_factory=ReportConfigSchema)
     include_materials: Optional[List[int]] = None  # 包含特定材料ID，None表示全部
     chart_images: Optional[Dict[str, str]] = None  # 前端生成的图表图片(base64)
+    report_id: Optional[int] = None  # 如果提供，则更新现有报告而不是创建新报告
+    is_draft: bool = False  # 是否仅创建草稿/记录
+
 
 
 class ReportResponse(BaseModel):
@@ -87,6 +91,7 @@ class ChartDataResponse(BaseModel):
 
 class ReportPreviewResponse(BaseModel):
     """报告预览响应"""
+    project_id: int
     project_name: str
     statistics: ReportStatistics
     chart_data: List[ChartDataResponse]
