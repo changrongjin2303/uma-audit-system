@@ -115,8 +115,9 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     # 上传 Nginx 配置并更新到容器
     echo "更新 Nginx 配置..."
     sshpass -p "$SERVER_PASSWORD" scp -o StrictHostKeyChecking=no frontend/nginx.conf $SERVER:$PROJECT_DIR/frontend/nginx.conf
-    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "docker cp $PROJECT_DIR/frontend/nginx.conf uma_audit_frontend:/etc/nginx/conf.d/default.conf"
-    echo -e "${GREEN}✅ Nginx 配置更新完成${NC}"
+    # docker cp 会失败如果目标是挂载点，所以只上传到宿主机，依赖后续的 restart 生效（假设有挂载）
+    # sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "docker cp $PROJECT_DIR/frontend/nginx.conf uma_audit_frontend:/etc/nginx/conf.d/default.conf"
+    echo -e "${GREEN}✅ Nginx 配置已上传（需重启生效）${NC}"
 fi
 
 # ============ 第4步：服务器拉取代码 ============
