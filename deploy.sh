@@ -111,6 +111,12 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "cd $PROJECT_DIR/frontend && rm -rf dist && tar -xzf dist.tar.gz && rm dist.tar.gz"
     
     echo -e "${GREEN}✅ 前端文件上传完成${NC}"
+
+    # 上传 Nginx 配置并更新到容器
+    echo "更新 Nginx 配置..."
+    sshpass -p "$SERVER_PASSWORD" scp -o StrictHostKeyChecking=no frontend/nginx.conf $SERVER:$PROJECT_DIR/frontend/nginx.conf
+    sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no $SERVER "docker cp $PROJECT_DIR/frontend/nginx.conf uma_audit_frontend:/etc/nginx/conf.d/default.conf"
+    echo -e "${GREEN}✅ Nginx 配置更新完成${NC}"
 fi
 
 # ============ 第4步：服务器拉取代码 ============

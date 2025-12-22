@@ -372,13 +372,14 @@ const captureCharts = async () => {
       await new Promise(resolve => setTimeout(resolve, 300))
       
       const canvas = await html2canvas(container, {
-        scale: 4, // High DPI (increased from 3)
+        scale: 2, // Reduce scale to avoid large payload (2 is sufficient for docs)
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false
       })
       
-      images[key] = canvas.toDataURL('image/png')
+      // Use JPEG with 0.8 quality for smaller size
+      images[key] = canvas.toDataURL('image/jpeg', 0.8)
     } catch (e) {
       console.error(`Capture failed for ${key}:`, e)
     } finally {
