@@ -15,7 +15,7 @@ logger.info(f"Matplotlib backend set to: {matplotlib.get_backend()}")
 
 from docx import Document
 from docx.shared import Inches, Cm, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT, WD_LINE_SPACING
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.enum.section import WD_SECTION, WD_ORIENT
 from docx.oxml.shared import OxmlElement, qn
@@ -798,22 +798,16 @@ class ReportGenerator:
 
         # 插入图表
         if chart_files:
-            # 使用表格来布局图片，这样更稳定
-            # 创建一个单列的表格，每行放一张图片
-            chart_table = doc.add_table(rows=len(chart_files), cols=1)
-            chart_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-            chart_table.autofit = False 
-            chart_table.allow_autofit = False
-            
+            # 修改：不再使用表格布局，而是直接使用段落，并设置单倍行距以防止图片被裁剪
             for i, chart_data in enumerate(chart_files):
                 try:
-                    cell = chart_table.rows[i].cells[0]
-                    # 设置单元格宽度
-                    cell.width = Inches(6.5)
-                    
-                    # 在单元格中添加段落并插入图片
-                    p = cell.paragraphs[0]
+                    # 创建新段落
+                    p = doc.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    
+                    # 关键修复：设置行距为单倍行距，防止因文档默认固定行距导致图片显示不全
+                    p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+                    
                     run = p.add_run()
                     
                     # 处理不同类型的图片数据，统一转换为bytes，确保WPS兼容性
@@ -843,8 +837,8 @@ class ReportGenerator:
                     if image_data and len(image_data) > 0:
                         try:
                             # 验证是否为有效的PNG图片（检查PNG文件头）
-                            if image_data[:8] != b'\x89PNG\r\n\x1a\n':
-                                logger.warning(f"图片数据可能不是有效的PNG格式，但仍尝试插入")
+                            if image_data[:8] != b'\x89PNG\r\n\x1a\n' and image_data[:2] != b'\xff\xd8': # PNG or JPEG
+                                logger.warning(f"图片数据可能不是有效的图片格式，但仍尝试插入")
                             
                             # 创建新的BytesIO对象，确保每次插入时数据都是完整的
                             image_bytes = BytesIO(image_data)
@@ -857,27 +851,15 @@ class ReportGenerator:
                             # 记录成功信息（添加WPS兼容性标记）
                             logger.info(f"[WPS兼容性修复] 图片已成功嵌入Word文档，大小: {len(image_data)} 字节，类型: {type(inline_shape)}")
                             
-                            # 确保图片是inline方式嵌入（WPS兼容性要求）
-                            # python-docx的add_picture默认就是inline方式，但我们可以验证
-                            try:
-                                # 验证图片确实被嵌入
-                                if hasattr(inline_shape, '_inline'):
-                                    logger.debug("图片已确认为inline嵌入方式")
-                            except Exception as e:
-                                logger.warning(f"无法验证图片嵌入方式: {e}，但图片已插入")
-                            
                         except Exception as e:
                             logger.error(f"插入图片到Word文档失败: {e}", exc_info=True)
                     else:
                         logger.warning(f"图片数据为空，跳过插入")
                         
-                    # 确保没有多余的边框（如果不需要边框的话）
-                    # self._remove_table_borders(chart_table) 
-                    
                 except Exception as e:
                     logger.error(f"添加图表失败: {e}", exc_info=True)
             
-            doc.add_paragraph()  # 表格后添加空行分开
+            doc.add_paragraph()  # 图片后添加空行分开
 
         if include_details:
             # 生成表1：材料价格分析表（无信息价材料）
