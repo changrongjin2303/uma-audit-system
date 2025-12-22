@@ -71,6 +71,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
+import html2canvas from 'html2canvas'
 import { downloadReport, previewReport, previewReportByProject, generateReport } from '@/api/reports'
 import MaterialAnalysisTable from '@/components/analysis/MaterialAnalysisTable.vue'
 import GuidancePriceMaterialTable from '@/components/analysis/GuidancePriceMaterialTable.vue'
@@ -345,6 +346,58 @@ const prepareChartData = (analysisData = [], guidanceData = []) => {
   }
 }
 
+const captureCharts = async () => {
+  const images = {}
+  
+  const processChart = async (chartRef, instance, key) => {
+    if (!chartRef || !chartRef.parentElement) return
+    
+    // Capture the parent .chart-section
+    const container = chartRef.parentElement
+    
+    // Save original styles
+    const originalWidth = container.style.width
+    const originalBackground = container.style.background
+    
+    try {
+      // Force A4 content width (approx 700px to be safe within margins)
+      // This ensures the layout in Word (A4) matches what we capture
+      container.style.width = '700px'
+      container.style.background = '#fff' // Ensure background is white
+      
+      // Trigger resize
+      if (instance) instance.resize()
+      
+      // Wait for resize animation/render
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      const canvas = await html2canvas(container, {
+        scale: 4, // High DPI (increased from 3)
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      })
+      
+      images[key] = canvas.toDataURL('image/png')
+    } catch (e) {
+      console.error(`Capture failed for ${key}:`, e)
+    } finally {
+      // Restore styles
+      container.style.width = originalWidth
+      container.style.background = originalBackground
+      
+      if (instance) instance.resize()
+    }
+  }
+  
+  // Capture sequentially
+  if (riskChartRef.value) await processChart(riskChartRef.value, chartInstances.risk, 'risk')
+  if (varianceChartRef.value) await processChart(varianceChartRef.value, chartInstances.adjustments, 'adjustment')
+  if (priceDistChartRef.value) await processChart(priceDistChartRef.value, chartInstances.totals, 'totals')
+  
+  return images
+}
+
 const loadPreview = async () => {
   try {
     let data
@@ -372,13 +425,21 @@ const onDownload = async () => {
   try {
     if (projectId) {
       // 通过项目预览的页面，需要先生成报告再下载
+      
+      // 1. 截取图表
+      ElMessage.info('正在截取图表，请稍候...')
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const chartImages = await captureCharts()
+
+      // 2. 生成报告
       ElMessage.info('正在生成报告，请稍候...')
       const generateResult = await generateReport({
         project_id: projectId,
         report_title: title.value,
         report_type: 'audit',
         include_charts: true,
-        include_problematic_materials: true
+        include_problematic_materials: true,
+        chart_images: chartImages
       })
       
       console.log('生成报告结果:', generateResult)
@@ -402,6 +463,10 @@ const onDownload = async () => {
     ElMessage.error('下载失败：' + (e.message || '未知错误'))
   } finally {
     downloading.value = false
+    // 恢复图表大小（以防万一）
+    Object.values(chartInstances).forEach(instance => {
+      if (instance) instance.resize()
+    })
   }
 }
 

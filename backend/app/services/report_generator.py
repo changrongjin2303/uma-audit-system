@@ -2,7 +2,7 @@ import os
 import re
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pathlib import Path
@@ -19,6 +19,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.enum.section import WD_SECTION, WD_ORIENT
 from docx.oxml.shared import OxmlElement, qn
+from docx.oxml.ns import nsdecls
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib import rcParams
@@ -110,7 +111,8 @@ class ReportGenerator:
         project: Project,
         materials: List[ProjectMaterial],
         analyses: List[PriceAnalysis],
-        report_config: Dict[str, Any] = None
+        report_config: Dict[str, Any] = None,
+        chart_images: Dict[str, str] = None
     ) -> str:
         """生成完整的审计报告
         
@@ -119,6 +121,7 @@ class ReportGenerator:
             materials: 项目材料列表
             analyses: 价格分析结果
             report_config: 报告配置参数
+            chart_images: 前端传入的图表图片(base64)
             
         Returns:
             报告文件路径
@@ -153,15 +156,20 @@ class ReportGenerator:
             self._add_methodology_section(doc, report_data)
 
             # 添加分析结果
-            await self._add_analysis_results(doc, report_data, include_details=include_details)
+            chart_files = []
+            if include_charts:
+                try:
+                    if chart_images:
+                        chart_files = self._process_chart_images(chart_images)
+                    else:
+                        chart_files = self._generate_charts(report_data)
+                except Exception as e:
+                    logger.error(f"生成图表失败: {e}")
+
+            await self._add_analysis_results(doc, report_data, include_details=include_details, chart_files=chart_files)
 
             # 添加问题材料详情
             # self._add_problematic_materials(doc, report_data)
-
-            # 添加图表分析
-            # if include_charts:
-            #     chart_files = self._generate_charts(report_data)
-            #     self._add_charts_to_document(doc, chart_files)
 
             # 添加建议措施
             if include_recommendations:
@@ -738,7 +746,7 @@ class ReportGenerator:
 
         doc.add_paragraph()
 
-    async def _add_analysis_results(self, doc: Document, data: Dict[str, Any], include_details: bool = True):
+    async def _add_analysis_results(self, doc: Document, data: Dict[str, Any], include_details: bool = True, chart_files: Optional[List[Union[bytes, BytesIO, str]]] = None):
         """添加分析结果"""
         doc.add_heading('分析结果', 1)
         
@@ -787,6 +795,89 @@ class ReportGenerator:
                 run.font.size = Pt(9)
 
         doc.add_paragraph()
+
+        # 插入图表
+        if chart_files:
+            # 使用表格来布局图片，这样更稳定
+            # 创建一个单列的表格，每行放一张图片
+            chart_table = doc.add_table(rows=len(chart_files), cols=1)
+            chart_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            chart_table.autofit = False 
+            chart_table.allow_autofit = False
+            
+            for i, chart_data in enumerate(chart_files):
+                try:
+                    cell = chart_table.rows[i].cells[0]
+                    # 设置单元格宽度
+                    cell.width = Inches(6.5)
+                    
+                    # 在单元格中添加段落并插入图片
+                    p = cell.paragraphs[0]
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = p.add_run()
+                    
+                    # 处理不同类型的图片数据，统一转换为bytes，确保WPS兼容性
+                    image_data = None
+                    if isinstance(chart_data, bytes):
+                        # 直接使用字节数据
+                        image_data = chart_data
+                    elif isinstance(chart_data, BytesIO):
+                        # 从BytesIO读取所有数据到内存，确保数据完整
+                        chart_data.seek(0)
+                        image_data = chart_data.read()
+                        chart_data.seek(0)  # 恢复原位置
+                    elif isinstance(chart_data, str) and os.path.exists(chart_data):
+                        # 从文件读取内容，确保图片数据被完整读取
+                        try:
+                            with open(chart_data, 'rb') as f:
+                                image_data = f.read()
+                            logger.debug(f"成功从文件读取图片，大小: {len(image_data)} 字节")
+                        except Exception as e:
+                            logger.error(f"读取图片文件失败 {chart_data}: {e}")
+                            continue
+                    else:
+                        logger.warning(f"图表数据格式不正确或文件不存在: {chart_data}")
+                        continue
+                    
+                    # 确保图片数据存在且有效后再插入
+                    if image_data and len(image_data) > 0:
+                        try:
+                            # 验证是否为有效的PNG图片（检查PNG文件头）
+                            if image_data[:8] != b'\x89PNG\r\n\x1a\n':
+                                logger.warning(f"图片数据可能不是有效的PNG格式，但仍尝试插入")
+                            
+                            # 创建新的BytesIO对象，确保每次插入时数据都是完整的
+                            image_bytes = BytesIO(image_data)
+                            
+                            # 插入图片，python-docx会自动处理嵌入到Word文档
+                            # 使用width参数确保图片大小合适
+                            # 注意：为了WPS兼容性，确保图片是inline嵌入而不是floating
+                            inline_shape = run.add_picture(image_bytes, width=Inches(6.2))
+                            
+                            # 记录成功信息（添加WPS兼容性标记）
+                            logger.info(f"[WPS兼容性修复] 图片已成功嵌入Word文档，大小: {len(image_data)} 字节，类型: {type(inline_shape)}")
+                            
+                            # 确保图片是inline方式嵌入（WPS兼容性要求）
+                            # python-docx的add_picture默认就是inline方式，但我们可以验证
+                            try:
+                                # 验证图片确实被嵌入
+                                if hasattr(inline_shape, '_inline'):
+                                    logger.debug("图片已确认为inline嵌入方式")
+                            except Exception as e:
+                                logger.warning(f"无法验证图片嵌入方式: {e}，但图片已插入")
+                            
+                        except Exception as e:
+                            logger.error(f"插入图片到Word文档失败: {e}", exc_info=True)
+                    else:
+                        logger.warning(f"图片数据为空，跳过插入")
+                        
+                    # 确保没有多余的边框（如果不需要边框的话）
+                    # self._remove_table_borders(chart_table) 
+                    
+                except Exception as e:
+                    logger.error(f"添加图表失败: {e}", exc_info=True)
+            
+            doc.add_paragraph()  # 表格后添加空行分开
 
         if include_details:
             # 生成表1：材料价格分析表（无信息价材料）
@@ -920,6 +1011,39 @@ class ReportGenerator:
                 cells[4].text = '未分析'
                 cells[5].text = '缺少价格分析'
     
+    def _process_chart_images(self, chart_images: Dict[str, str]) -> List[bytes]:
+        """处理前端传入的图表图片，返回图片字节数据列表以便直接嵌入Word文档
+        返回bytes而不是BytesIO，确保数据完整性，提高WPS兼容性
+        """
+        chart_data_list = []
+        
+        # 定义图表顺序，与前端对应
+        # risk: 风险等级分布
+        # adjustment: 核增减额TOP10
+        # totals: 送审 VS AI 核审 总额对比
+        order = ['risk', 'adjustment', 'totals']
+        
+        for key in order:
+            base64_str = chart_images.get(key)
+            if not base64_str:
+                continue
+                
+            try:
+                # 移除base64前缀
+                if ',' in base64_str:
+                    base64_str = base64_str.split(',')[1]
+                    
+                image_data = base64.b64decode(base64_str)
+                
+                # 直接保存字节数据，而不是BytesIO对象，确保数据完整性
+                chart_data_list.append(image_data)
+                
+                logger.info(f"[WPS兼容性修复] 成功处理图表 {key}，数据大小: {len(image_data)} 字节，PNG头: {image_data[:8].hex() if len(image_data) >= 8 else 'N/A'}")
+            except Exception as e:
+                logger.error(f"处理图表 {key} 失败: {e}")
+                
+        return chart_data_list
+
     def _generate_charts(self, data: Dict[str, Any]) -> List[str]:
         """生成图表文件"""
         chart_files = []

@@ -34,7 +34,8 @@ class ReportService:
         user_id: int,
         report_title: Optional[str] = None,
         config: Optional[ReportConfigSchema] = None,
-        include_materials: Optional[List[int]] = None
+        include_materials: Optional[List[int]] = None,
+        chart_images: Optional[Dict[str, str]] = None
     ) -> ReportResponse:
         """生成审计报告"""
         try:
@@ -90,7 +91,8 @@ class ReportService:
                     project,
                     materials,
                     analyses,
-                    config.dict() if config else {}
+                    config.dict() if config else {},
+                    chart_images=chart_images
                 )
                 
                 # 更新报告记录

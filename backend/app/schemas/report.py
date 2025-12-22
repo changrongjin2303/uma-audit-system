@@ -36,6 +36,7 @@ class ReportGenerationRequest(BaseModel):
     report_title: Optional[str] = None
     config: Optional[ReportConfigSchema] = Field(default_factory=ReportConfigSchema)
     include_materials: Optional[List[int]] = None  # 包含特定材料ID，None表示全部
+    chart_images: Optional[Dict[str, str]] = None  # 前端生成的图表图片(base64)
 
 
 class ReportResponse(BaseModel):
