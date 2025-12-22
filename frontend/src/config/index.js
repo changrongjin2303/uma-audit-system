@@ -198,7 +198,7 @@ export const RISK_LEVELS = {
     threshold: 50
   },
   critical: {
-    label: '严重风险',
+    label: '极高风险',
     color: 'danger',
     icon: 'CircleClose',
     threshold: 100

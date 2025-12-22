@@ -182,7 +182,7 @@
               <el-option label="低风险" value="low" />
               <el-option label="中风险" value="medium" />
               <el-option label="高风险" value="high" />
-              <el-option label="严重风险" value="critical" />
+              <el-option label="极高风险" value="critical" />
             </el-select>
             <el-button :icon="Refresh" @click="fetchAnalysisResults">
               刷新
@@ -795,7 +795,7 @@
             <el-option label="低风险" value="low" />
             <el-option label="中风险" value="medium" />
             <el-option label="高风险" value="high" />
-            <el-option label="严重风险" value="critical" />
+            <el-option label="极高风险" value="critical" />
           </el-select>
         </el-form-item>
         
@@ -1424,7 +1424,7 @@ const getRiskText = (risk) => {
     'low': '低风险',
     'medium': '中风险',
     'high': '高风险',
-    'critical': '严重风险'
+    'critical': '极高风险'
   }
   return textMap[risk] || risk
 }

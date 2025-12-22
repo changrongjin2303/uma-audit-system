@@ -118,9 +118,18 @@ async def download_report(
             '.txt': 'text/plain'
         }
         import os as _os
+        from urllib.parse import quote
         ext = _os.path.splitext(filename or file_path)[1].lower()
         media_type = media_map.get(ext, 'application/octet-stream')
-        return FileResponse(path=file_path, filename=filename, media_type=media_type)
+        
+        # 手动设置Content-Disposition，避免自动添加utf-8标识
+        # 使用URL编码的文件名，大多数现代浏览器都能正确识别
+        encoded_filename = quote(filename)
+        headers = {
+            "Content-Disposition": f"attachment; filename={encoded_filename}"
+        }
+        
+        return FileResponse(path=file_path, media_type=media_type, headers=headers)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="报告文件不存在")
     except Exception as e:

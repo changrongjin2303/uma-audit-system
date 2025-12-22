@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
@@ -6,6 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pathlib import Path
 import json
+from loguru import logger
+import matplotlib
+# 设置matplotlib后端为Agg，必须在导入pyplot之前设置
+matplotlib.use('Agg')
+logger.info(f"Matplotlib backend set to: {matplotlib.get_backend()}")
 
 from docx import Document
 from docx.shared import Inches, Cm, Pt
@@ -26,7 +32,6 @@ from app.models.analysis import AuditReport
 from app.models.project import Project, ProjectMaterial, ProjectType
 from app.models.analysis import PriceAnalysis
 from app.models.user import User
-from loguru import logger
 
 
 PROVINCE_MAP = {
@@ -73,18 +78,29 @@ class ReportGenerator:
     
     def __init__(self):
         self.templates_dir = Path("templates")
-        self.reports_dir = Path("reports")
+        
+        # 使用绝对路径，确保在不同环境下都能正常工作
+        if hasattr(settings, 'REPORTS_DIR') and settings.REPORTS_DIR:
+            self.reports_dir = Path(settings.REPORTS_DIR)
+        else:
+            # 使用当前工作目录下的reports文件夹
+            self.reports_dir = Path.cwd() / "reports"
+            
         self.reports_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"ReportGenerator output directory: {self.reports_dir.absolute()}")
         
         # 配置matplotlib中文支持（增加常见中文字体作为回退）
         rcParams['font.family'] = 'sans-serif'
         rcParams['font.sans-serif'] = [
+            'Arial Unicode MS',
+            'Heiti TC',
+            'Songti SC',
+            'STHeiti',
             'Microsoft YaHei',
             'SimSun',
             'PingFang SC',
             'Noto Sans CJK SC',
-            'SimHei',
-            'Arial Unicode MS'
+            'SimHei'
         ]
         rcParams['axes.unicode_minus'] = False
         
@@ -140,12 +156,12 @@ class ReportGenerator:
             await self._add_analysis_results(doc, report_data, include_details=include_details)
 
             # 添加问题材料详情
-            self._add_problematic_materials(doc, report_data)
+            # self._add_problematic_materials(doc, report_data)
 
             # 添加图表分析
-            if include_charts:
-                chart_files = self._generate_charts(report_data)
-                self._add_charts_to_document(doc, chart_files)
+            # if include_charts:
+            #     chart_files = self._generate_charts(report_data)
+            #     self._add_charts_to_document(doc, chart_files)
 
             # 添加建议措施
             if include_recommendations:
@@ -156,7 +172,9 @@ class ReportGenerator:
                 self._add_appendices(doc, report_data)
 
             # 保存报告
-            report_filename = f"audit_report_{project.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+            # 使用项目名称作为文件名的一部分
+            project_name_safe = re.sub(r'[\\/*?:"<>|]', '_', project.name) if project.name else f"project_{project.id}"
+            report_filename = f"分析报告_{project_name_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             report_path = self.reports_dir / report_filename
             doc.save(str(report_path))
 
@@ -1185,7 +1203,7 @@ class ReportGenerator:
         tech_info = """
 本报告使用人工智能技术进行材料价格分析，主要技术特点如下：
 
-1. 多AI服务集成：支持OpenAI GPT-4、通义千问等多个AI服务。
+1. 多AI服务集成：支持deepseek、通义千问、豆包多个AI服务。
 2. 智能匹配算法：基于材料名称、规格、单位等多维度进行相似度计算。
 3. 价格合理性分析：结合统计学方法和AI预测进行综合判断。
 4. 故障转移机制：确保分析服务的高可用性。

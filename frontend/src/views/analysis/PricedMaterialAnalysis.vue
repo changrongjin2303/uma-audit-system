@@ -521,8 +521,8 @@ const getDifferenceLevelText = (level) => {
     'low': '低风险',
     'medium': '中风险',
     'high': '高风险',
-    'critical': '严重风险',
-    'severe': '严重风险'
+    'critical': '极高风险',
+    'severe': '极高风险'
   }
   return textMap[level] || level
 }

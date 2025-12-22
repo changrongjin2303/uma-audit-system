@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -135,7 +136,9 @@ class SimpleReportGenerator:
             
             # 保存报告
             project_id = project.id if project else 'unknown'
-            report_filename = f"audit_report_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+            project_name = project.name if project else f"project_{project_id}"
+            project_name_safe = re.sub(r'[\\/*?:"<>|]', '_', project_name)
+            report_filename = f"分析报告_{project_name_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             report_path = self.reports_dir / report_filename
             
             # 确保可以写入文件
@@ -154,9 +157,9 @@ class SimpleReportGenerator:
                 
             except Exception as save_error:
                 logger.error(f"保存报告文件失败: {save_error}")
-                # 尝试使用不同的文件名
+                    # 尝试使用不同的文件名
                 import uuid
-                backup_filename = f"audit_report_{uuid.uuid4().hex[:8]}.docx"
+                backup_filename = f"分析报告_{uuid.uuid4().hex[:8]}.docx"
                 backup_path = self.reports_dir / backup_filename
                 doc.save(str(backup_path))
                 logger.warning(f"使用备用文件名保存: {backup_path}")
@@ -663,7 +666,9 @@ class SimpleReportGenerator:
             
             # 保存文件
             project_id = project.id if project else 'unknown'
-            report_filename = f"minimal_report_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+            project_name = project.name if project else f"project_{project_id}"
+            project_name_safe = re.sub(r'[\\/*?:"<>|]', '_', project_name)
+            report_filename = f"分析报告_简版_{project_name_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             report_path = self.reports_dir / report_filename
             doc.save(str(report_path))
             
@@ -703,7 +708,8 @@ class SimpleReportGenerator:
 - 报告目录: {self.reports_dir}
 """
             
-            report_filename = f"text_report_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            project_name_safe = re.sub(r'[\\/*?:"<>|]', '_', project_name)
+            report_filename = f"分析报告_文本版_{project_name_safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             report_path = self.reports_dir / report_filename
             
             with open(report_path, 'w', encoding='utf-8') as f:

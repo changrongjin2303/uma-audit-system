@@ -14,6 +14,7 @@
           type="primary"
           :icon="Document"
           @click="batchGenerateReports"
+          :disabled="selectedProjects.length === 0"
         >
           批量生成报告
         </el-button>
@@ -98,7 +99,9 @@
         :data="filteredProjects"
         stripe
         style="width: 100%"
+        @selection-change="handleSelectionChange"
       >
+        <el-table-column type="selection" width="55" />
         <el-table-column prop="name" label="项目名称" min-width="200">
           <template #default="{ row }">
             <div class="project-info">
@@ -310,7 +313,7 @@
             <el-option label="低风险" value="low" />
             <el-option label="中风险" value="medium" />
             <el-option label="高风险" value="high" />
-            <el-option label="严重风险" value="critical" />
+            <el-option label="极高风险" value="critical" />
           </el-select>
         </el-form-item>
         
@@ -359,6 +362,7 @@ import {
 } from '@element-plus/icons-vue'
 import { formatDate, formatNumber } from '@/utils'
 import { getProjectAnalysisResults, getProjectAnalysisStatistics, getProjectsWithAnalysis } from '@/api/analysis'
+import { generateReport } from '@/api/reports'
 
 const router = useRouter()
 const route = useRoute()
@@ -371,6 +375,7 @@ const showAdjustDialog = ref(false)
 const searchKeyword = ref('')
 
 const projects = ref([])
+const selectedProjects = ref([])
 const currentResult = ref(null)
 const analysisHistory = ref([])
 
@@ -505,13 +510,73 @@ const handleSearch = () => {
 }
 
 // 批量生成报告
-const batchGenerateReports = () => {
-  if (projects.value.length === 0) {
-    ElMessage.warning('没有可生成报告的项目')
+const handleSelectionChange = (val) => {
+  selectedProjects.value = val
+}
+
+const batchGenerateReports = async () => {
+  if (selectedProjects.value.length === 0) {
+    ElMessage.warning('请先选择要生成报告的项目')
     return
   }
   
-  router.push('/reports/batch-generate')
+  try {
+    await ElMessageBox.confirm(
+      `确定要为选中的 ${selectedProjects.value.length} 个项目生成详细分析报告吗？`,
+      '批量生成报告',
+      {
+        confirmButtonText: '确定生成',
+        cancelButtonText: '取消',
+        type: 'info'
+      }
+    )
+
+    const loadingInstance = ElMessage.info({
+      message: '正在批量生成报告，请稍候...',
+      duration: 0
+    })
+
+    let successCount = 0
+    let failCount = 0
+
+    // 串行执行生成请求，避免后端压力过大
+    for (const project of selectedProjects.value) {
+      try {
+        await generateReport({
+          project_id: project.id,
+          report_title: `${project.name} - 价格分析报告`,
+          config: {
+            report_type: "price_analysis",
+            include_charts: true,
+            include_detailed_analysis: true,
+            include_recommendations: true,
+            include_appendices: true
+          }
+        })
+        successCount++
+      } catch (error) {
+        console.error(`项目 ${project.name} 报告生成失败:`, error)
+        failCount++
+      }
+    }
+
+    loadingInstance.close()
+
+    if (failCount === 0) {
+      ElMessage.success(`成功生成 ${successCount} 个报告`)
+    } else {
+      ElMessage.warning(`报告生成完成：成功 ${successCount} 个，失败 ${failCount} 个`)
+    }
+    
+    // 可选：跳转到报告列表页查看结果
+    // router.push('/reports')
+    
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('批量生成报告出错:', error)
+      ElMessage.error('批量生成报告过程中发生错误')
+    }
+  }
 }
 
 // 项目类型相关方法
@@ -574,8 +639,8 @@ const getRiskText = (risk) => {
     'low': '低风险',
     'medium': '中风险',
     'high': '高风险',
-    'critical': '严重风险',
-    'severe': '严重风险'
+    'critical': '极高风险',
+    'severe': '极高风险'
   }
   return textMap[risk] || risk
 }

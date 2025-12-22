@@ -332,7 +332,7 @@ class ReportService:
             if not report.report_file_path or not os.path.exists(report.report_file_path):
                 raise HTTPException(status_code=404, detail="报告文件不存在")
             
-            filename = report.report_filename or f"audit_report_{report.id}.docx"
+            filename = report.report_filename or f"分析报告_{report.id}.docx"
             return report.report_file_path, filename
             
         except HTTPException:
