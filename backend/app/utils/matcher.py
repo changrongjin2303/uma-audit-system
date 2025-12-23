@@ -1,8 +1,11 @@
 import re
 import difflib
+import json
+import os
 from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 from loguru import logger
+from pathlib import Path
 
 import jieba
 import jieba.analyse
@@ -71,6 +74,46 @@ class MaterialMatcher:
             '套': ['套', 'set'],
             'L': ['L', 'l', '升', '公升'],
         }
+        
+        # 加载映射规则
+        self.mapping_rules = self._load_mapping_rules()
+    
+    def _load_mapping_rules(self) -> Dict[str, Any]:
+        """加载材料映射规则"""
+        try:
+            # 获取当前文件所在目录: backend/app/utils
+            current_dir = Path(__file__).parent
+            # 构建 config 目录路径: backend/app/config
+            config_path = current_dir.parent / "config" / "material_mapping_rules.json"
+            
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    rules = json.load(f)
+                    logger.info(f"成功加载材料映射规则: {len(rules.get('exact_matches', {}))} 条精确匹配规则")
+                    return rules
+            
+            logger.warning(f"材料映射规则文件不存在: {config_path}")
+            return {"exact_matches": {}, "partial_matches": {}}
+        except Exception as e:
+            logger.error(f"加载材料映射规则失败: {e}")
+            return {"exact_matches": {}, "partial_matches": {}}
+
+    def _apply_mapping_rules(self, material_name: str) -> str:
+        """应用映射规则转换材料名称"""
+        if not material_name:
+            return material_name
+            
+        # 精确匹配
+        exact_matches = self.mapping_rules.get("exact_matches", {})
+        # 清理名称以便匹配 (去除空格等)
+        clean_name = material_name.strip()
+        
+        if clean_name in exact_matches:
+            mapped_name = exact_matches[clean_name]
+            logger.info(f"应用精确映射规则: '{material_name}' -> '{mapped_name}'")
+            return mapped_name
+            
+        return material_name
     
     def _load_custom_dict(self):
         """加载自定义建材词典"""
@@ -417,11 +460,21 @@ class MaterialMatcher:
     ) -> List[MatchResult]:
         """找到最佳匹配的基准材料"""
 
+        # 应用映射规则
+        original_name = project_material.get('material_name', '')
+        mapped_name = self._apply_mapping_rules(original_name)
+        
+        # 如果名称发生了变化，创建一个新的字典以避免修改原始数据
+        current_project_material = project_material
+        if mapped_name != original_name:
+            current_project_material = project_material.copy()
+            current_project_material['material_name'] = mapped_name
+
         matches = []
 
         for base_material in base_materials:
             try:
-                match_result = self.calculate_similarity(project_material, base_material)
+                match_result = self.calculate_similarity(current_project_material, base_material)
                 matches.append(match_result)
             except Exception as e:
                 logger.warning(f"匹配计算失败: {e}")

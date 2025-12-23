@@ -118,7 +118,7 @@
 
     <!-- 表格备注 -->
     <div class="table-notes">
-      <p>备注：（1）本表可扩展；（2）差额为正值即核减，负值即核增；（3）本表可作为过程资料一并归档。</p>
+      <p>备注：（1）本表可扩展；（2）差额为正值即核增，负值即核减；（3）本表可作为过程资料一并归档。</p>
     </div>
 
     <!-- 统计汇总 -->
@@ -177,7 +177,7 @@ const statistics = computed(() => {
   const totalMaterials = tableData.value.length
   const originalTotal = tableData.value.reduce((sum, item) => sum + (item.originalTotalPrice || 0), 0)
   const aiTotal = tableData.value.reduce((sum, item) => sum + (item.aiTotalPrice || 0), 0)
-  const totalAdjustment = originalTotal - aiTotal
+  const totalAdjustment = aiTotal - originalTotal
   
   return {
     totalMaterials,
@@ -365,7 +365,7 @@ const processAnalysisData = (data) => {
     originalTotalPrice: (Number(item.original_price) || 0) * (Number(item.quantity) || 0),
     aiUnitPrice: Number(item.ai_predicted_price || item.predicted_price) || 0,
     aiTotalPrice: (Number(item.ai_predicted_price || item.predicted_price) || 0) * (Number(item.quantity) || 0),
-    adjustment: ((Number(item.original_price) || 0) - (Number(item.ai_predicted_price || item.predicted_price) || 0)) * (Number(item.quantity) || 0),
+    adjustment: ((Number(item.ai_predicted_price || item.predicted_price) || 0) - (Number(item.original_price) || 0)) * (Number(item.quantity) || 0),
     weightPercentage: Number(item.weight_percentage) || 0,
     riskLevel: (item.risk_level || '').toLowerCase(),
     isReasonable: item.is_reasonable

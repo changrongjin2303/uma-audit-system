@@ -710,7 +710,7 @@ class ReportService:
             # 计算合计价格和调整额
             original_total = original_price * quantity
             ai_total = ai_recommended_price * quantity
-            adjustment = original_total - ai_total
+            adjustment = ai_total - original_total
             
             # 计算权重百分比（基于合计金额占比）
             total_amount = sum((m.unit_price or 0) * (m.quantity or 1) for m in materials)

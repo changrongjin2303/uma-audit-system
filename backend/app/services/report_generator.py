@@ -864,10 +864,10 @@ class ReportGenerator:
         if include_details:
             # 生成表1：材料价格分析表（无信息价材料）
             if analysis_materials:
-                # 筛选核增（减）额为正数的数据（即送审价 > AI价，核减）
+                # 筛选核增（减）额为负数的数据（即AI价 < 送审价，核减）
                 filtered_materials = [
                     m for m in analysis_materials
-                    if m.get('adjustment', 0) > 0
+                    if m.get('adjustment', 0) < 0
                 ]
                 # 按权重百分比降序排序（权重高的材料排在前面）
                 filtered_materials.sort(
@@ -886,7 +886,7 @@ class ReportGenerator:
                         project.name or "未命名项目"
                     )
                 else:
-                    p = doc.add_paragraph("表1：未发现正向核增（减）材料（无核减项）。")
+                    p = doc.add_paragraph("表1：未发现核减材料（无负向核增减额）。")
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
             # 生成表2：材料价格分析表（市场信息价材料）
@@ -1704,9 +1704,9 @@ class ReportGenerator:
         # 添加备注
         notes = doc.add_paragraph()
         if table_type == "analysis":
-            notes.text = "备注：（1）本表可扩展；（2）差额为正值即核减，负值即核增；（3）本表可作为过程资料一并归档。"
+            notes.text = "备注：（1）本表可扩展；（2）差额为正值即核增，负值即核减；（3）本表可作为过程资料一并归档。"
         else:
-            notes.text = "备注：（1）本表可扩展；（2）差额为正值即核减，负值即核增；（3）本表可纳入审价过程资料一并归档。"
+            notes.text = "备注：（1）本表可扩展；（2）差额为正值即核增，负值即核减；（3）本表可纳入审价过程资料一并归档。"
         
         notes.runs[0].font.name = 'SimSun'  # 宋体
         notes.runs[0].font.size = Pt(8)

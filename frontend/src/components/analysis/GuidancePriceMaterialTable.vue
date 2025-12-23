@@ -222,9 +222,9 @@ const statistics = computed(() => {
     return sum + (calculateAdjustmentDiff(item) || 0)
   }, 0)
 
-  // AI审核总额 = 送审总额 - 调差总额
-  // 注意：调差为正值即核减，所以 Audited = Original - Adjustment
-  const aiTotal = originalTotal - totalAdjustment
+  // AI审核总额 = 送审总额 + 调差总额
+  // 注意：调差为正值即核增，所以 Audited = Original + Adjustment
+  const aiTotal = originalTotal + totalAdjustment
   
   return {
     totalMaterials,
@@ -507,7 +507,7 @@ const processGuidancePriceData = (data) => {
     aiTotalPrice: Number(item.guidance_total_price) || (Number(item.guidance_price || item.base_price) || 0) * (Number(item.quantity) || 0),
     originalBasePrice: Number(item.original_base_price) || 0,
     baseUnit: item.base_unit || '',
-    adjustment: Number(item.adjustment) || ((Number(item.original_price) || 0) - (Number(item.guidance_price || item.base_price) || 0)) * (Number(item.quantity) || 0),
+    adjustment: Number(item.adjustment) || ((Number(item.guidance_price || item.base_price) || 0) - (Number(item.original_price) || 0)) * (Number(item.quantity) || 0),
     weightPercentage: Number(item.weight_percentage) || 0,
     priceDiff: item.price_diff !== undefined ? Number(item.price_diff) : undefined,
     riskRate: item.risk_rate !== undefined ? Number(item.risk_rate) : undefined

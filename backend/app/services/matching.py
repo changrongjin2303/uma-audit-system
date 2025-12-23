@@ -413,15 +413,26 @@ class MaterialMatchingService:
             'category': project_material.category,
         }
         
+        # 应用映射规则以获取正确的名称进行预过滤
+        mapped_name = self.matcher._apply_mapping_rules(project_material.material_name)
+        if mapped_name != project_material.material_name:
+            logger.info(f"预处理应用映射规则: '{project_material.material_name}' -> '{mapped_name}'")
+            # 创建临时字典用于预过滤
+            filter_dict = project_material_dict.copy()
+            filter_dict['material_name'] = mapped_name
+        else:
+            filter_dict = project_material_dict
+
         # 预过滤：根据关键词快速筛选候选材料
         candidates = await self._prefilter_candidates(
-            project_material_dict, base_materials
+            filter_dict, base_materials
         )
         
         if not candidates:
             return []
         
         # 执行详细匹配
+        # 注意：find_best_matches 内部也会再次应用映射规则，这是安全的
         match_results = self.matcher.find_best_matches(
             project_material_dict, candidates, top_k=5
         )
