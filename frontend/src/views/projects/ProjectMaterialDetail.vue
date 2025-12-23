@@ -108,7 +108,12 @@
                   <span class="value">{{ getMatchMethodText(material.match_method) }}</span>
                 </div>
                 <div v-if="matchedBaseMaterial" class="matched-material">
-                  <h4>匹配的市场信息价材料</h4>
+                  <h4>
+                    匹配的市场信息价材料
+                    <el-button type="primary" link size="small" @click="searchSimilarMaterials" style="float: right;">
+                      更换匹配
+                    </el-button>
+                  </h4>
                   <div class="base-material-card">
                     <div class="info-item">
                       <span class="label">材料名称：</span>
@@ -293,16 +298,103 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 搜索相似材料对话框 -->
+    <el-dialog
+      v-model="searchDialogVisible"
+      title="搜索市场信息价材料"
+      width="900px"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <div class="search-box">
+        <el-row :gutter="10">
+          <el-col :span="8">
+            <el-input
+              v-model="searchQuery"
+              placeholder="请输入材料名称关键字"
+              class="search-input"
+              clearable
+              @keyup.enter="handleSearch"
+            >
+              <template #prepend>名称</template>
+            </el-input>
+          </el-col>
+          <el-col :span="6">
+            <el-date-picker
+              v-model="searchFilters.price_date"
+              type="month"
+              placeholder="选择期数"
+              value-format="YYYY-MM"
+              style="width: 100%"
+              @change="handleSearch"
+            />
+          </el-col>
+          <el-col :span="6">
+            <el-input
+              v-model="searchFilters.region"
+              placeholder="输入地区(省/市)"
+              clearable
+              @keyup.enter="handleSearch"
+            >
+              <template #prepend>地区</template>
+            </el-input>
+          </el-col>
+          <el-col :span="4">
+            <el-button type="primary" :icon="Search" @click="handleSearch" style="width: 100%">
+              搜索
+            </el-button>
+          </el-col>
+        </el-row>
+      </div>
+
+      <el-table
+        v-loading="searchLoading"
+        :data="searchResults"
+        border
+        style="width: 100%; margin-top: 20px;"
+        max-height="400"
+      >
+        <el-table-column prop="name" label="材料名称" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="specification" label="规格型号" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="unit" label="单位" width="80" align="center" />
+        <el-table-column prop="price" label="价格" width="100" align="right">
+          <template #default="{ row }">
+            <span style="color: #e6a23c; font-weight: bold;">¥{{ formatNumber(row.price) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="region" label="地区" width="100" align="center" />
+        <el-table-column prop="source" label="来源" width="120" show-overflow-tooltip />
+        <el-table-column label="操作" width="100" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button type="primary" size="small" @click="handleSelectMaterial(row)">
+              选择
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-container" style="margin-top: 20px; text-align: right;">
+        <el-pagination
+          v-model:current-page="searchPagination.page"
+          v-model:page-size="searchPagination.size"
+          :total="searchPagination.total"
+          layout="total, prev, pager, next"
+          @current-change="handlePageChange"
+        />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
-import { getProjectMaterial, cancelProjectMaterialMatch, updateProjectMaterial } from '@/api/projects'
-import { getBaseMaterial } from '@/api/materials'
+import { ArrowLeft, ArrowRight, Search } from '@element-plus/icons-vue'
+import { getProjectMaterial, cancelProjectMaterialMatch, updateProjectMaterial, getProject } from '@/api/projects'
+import { getBaseMaterial, getBaseMaterials } from '@/api/materials'
+import { confirmMaterialMatch } from '@/api/matching'
 import { formatDate, formatNumber } from '@/utils'
 import { ElMessageBox } from 'element-plus'
 
@@ -312,6 +404,7 @@ const router = useRouter()
 // 响应式数据
 const loading = ref(false)
 const material = ref(null)
+const projectInfo = ref(null)
 const matchedBaseMaterial = ref(null)
 const showEditDialog = ref(false)
 const editForm = ref({
@@ -325,6 +418,21 @@ const editForm = ref({
 })
 const editFormRef = ref()
 
+// 搜索相似材料相关状态
+const searchDialogVisible = ref(false)
+const searchQuery = ref('')
+const searchFilters = reactive({
+  price_date: '',
+  region: ''
+})
+const searchResults = ref([])
+const searchLoading = ref(false)
+const searchPagination = reactive({
+  page: 1,
+  size: 10,
+  total: 0
+})
+
 // 获取材料详情
 const fetchMaterialDetail = async () => {
   loading.value = true
@@ -332,6 +440,14 @@ const fetchMaterialDetail = async () => {
     const projectId = route.params.projectId
     const materialId = route.params.materialId
     
+    // 获取项目详情
+    try {
+      const projectData = await getProject(projectId)
+      projectInfo.value = projectData
+    } catch (error) {
+      console.warn('获取项目详情失败:', error)
+    }
+
     // 获取项目材料详情
     const materialData = await getProjectMaterial(projectId, materialId)
     material.value = materialData
@@ -519,12 +635,97 @@ const getDiffClass = () => {
 }
 
 // 操作方法
+const handleSearch = async () => {
+  searchLoading.value = true
+  try {
+    const params = {
+      page: searchPagination.page,
+      size: searchPagination.size,
+      name: searchQuery.value,
+      price_date: searchFilters.price_date || undefined,
+      region: searchFilters.region || undefined
+    }
+    const res = await getBaseMaterials(params)
+    if (res && res.items) {
+      searchResults.value = res.items
+      searchPagination.total = res.total || 0
+    } else if (res && res.data && res.data.items) {
+      searchResults.value = res.data.items
+      searchPagination.total = res.data.total || 0
+    } else {
+      searchResults.value = []
+      searchPagination.total = 0
+    }
+  } catch (error) {
+    console.error('Search failed', error)
+    ElMessage.error('搜索失败')
+  } finally {
+    searchLoading.value = false
+  }
+}
+
+const handlePageChange = (page) => {
+  searchPagination.page = page
+  handleSearch()
+}
+
+const openSearchDialog = () => {
+  searchQuery.value = material.value.material_name // Default keyword
+  searchFilters.region = '' // Default region empty
+  
+  // 设置默认过滤条件
+  if (projectInfo.value) {
+    // 提取基期日期 (格式转换: YYYY年MM月 -> YYYY-MM)
+    if (projectInfo.value.base_price_date) {
+      const match = projectInfo.value.base_price_date.match(/(\d{4})年(\d{2})月/)
+      if (match) {
+        searchFilters.price_date = `${match[1]}-${match[2]}`
+      } else {
+        // 尝试直接使用，如果格式已经是 YYYY-MM
+        searchFilters.price_date = projectInfo.value.base_price_date
+      }
+    }
+  }
+
+  searchPagination.page = 1
+  searchDialogVisible.value = true
+  handleSearch()
+}
+
 const searchSimilarMaterials = () => {
-  ElMessage.info('搜索相似材料功能开发中...')
+  openSearchDialog()
+}
+
+const handleSelectMaterial = async (baseMaterial) => {
+  try {
+    loading.value = true
+    // 确认匹配
+    await confirmMaterialMatch(material.value.id, baseMaterial.id, true)
+    
+    // 更新材料状态：设置为已匹配，并不再需要人工复核
+    await updateProjectMaterial(route.params.projectId, material.value.id, {
+      is_matched: true,
+      needs_review: false,
+      match_method: 'manual_match'
+    })
+    
+    ElMessage.success('匹配成功')
+    searchDialogVisible.value = false
+    await fetchMaterialDetail() // Refresh
+    
+    // 更新后直接返回上一页
+    router.back()
+    
+  } catch (error) {
+    console.error('匹配失败', error)
+    ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
+  } finally {
+    loading.value = false
+  }
 }
 
 const startMatching = () => {
-  ElMessage.info('开始匹配功能开发中...')
+  openSearchDialog()
 }
 
 const cancelMatch = async () => {

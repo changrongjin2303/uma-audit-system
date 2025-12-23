@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Dict, Optional
 
@@ -166,6 +167,89 @@ def convert_price_to_target_unit(price: Decimal, original_unit: str, target_unit
     return convert_unit_price(price, original_unit, target_unit)
 
 
+def _calculate_sheet_area(specification: str) -> Optional[Decimal]:
+    """
+    从规格字符串中解析板材面积（平方米）。
+    支持格式：2440×1220×12mm, 2440*1220*18, 1220x2440 等。
+    默认单位为毫米(mm)。
+    """
+    if not specification:
+        return None
+    
+    # 清理字符串，移除空格
+    spec = specification.replace(" ", "")
+    
+    # 尝试匹配两个或三个数字，由分隔符连接
+    # 例如: 2440×1220×12
+    # 匹配模式：数字[xX*×]数字...
+    pattern = r"(\d+(?:\.\d+)?)[xX\*×](\d+(?:\.\d+)?)(?:[xX\*×](\d+(?:\.\d+)?))?"
+    match = re.search(pattern, spec)
+    
+    if match:
+        try:
+            l = Decimal(match.group(1))
+            w = Decimal(match.group(2))
+            
+            # 简单校验：板材长宽通常在 100-10000 之间 (mm)
+            # 如果解析出的数字过小（可能是米），则不除以1000000
+            # 这里假设如果是米，数值通常小于10
+            is_meter = False
+            if l < 10 and w < 10:
+                is_meter = True
+                
+            # 计算面积
+            if is_meter:
+                area_m2 = l * w
+            else:
+                # 默认为 mm -> m²
+                area_mm2 = l * w
+                area_m2 = area_mm2 / Decimal("1000000")
+                
+            return area_m2
+        except Exception:
+            return None
+            
+    return None
+
+
+def convert_unit_price_with_spec(
+    price: Decimal, 
+    from_unit: str, 
+    to_unit: str, 
+    specification: str = ""
+) -> Optional[Decimal]:
+    """
+    带规格参数的单价换算。
+    优先尝试基于规格的特殊换算（如 张 -> m²），
+    如果无法进行特殊换算，则回退到通用单位换算。
+    """
+    norm_from = normalize_unit(from_unit)
+    norm_to = normalize_unit(to_unit)
+    
+    # 特殊换算：张 -> m² / m2
+    # 扩展支持其他类似“张”的计数单位，如“块”、“片”
+    sheet_units = ["张", "块", "片"]
+    area_units = ["m²", "m2", "㎡", "平方米", "平米"]
+    
+    if norm_from in sheet_units and norm_to in area_units:
+        area = _calculate_sheet_area(specification)
+        if area and area > 0:
+            # 1 张 = area m²
+            # 单价换算：元/张 / (area m²/张) = 元/m²
+            return price / area
+            
+    # 特殊换算：m² -> 张
+    if norm_from in area_units and norm_to in sheet_units:
+        area = _calculate_sheet_area(specification)
+        if area and area > 0:
+            # 1 张 = area m²
+            # 单价换算：元/m² * (area m²/张) = 元/张
+            return price * area
+
+    # 回退到通用换算
+    return convert_unit_price(price, from_unit, to_unit)
+
+
 __all__ = [
     "normalize_unit",
     "can_convert_units",
@@ -173,4 +257,5 @@ __all__ = [
     "convert_quantity",
     "convert_unit_price",
     "convert_price_to_target_unit",
+    "convert_unit_price_with_spec",
 ]

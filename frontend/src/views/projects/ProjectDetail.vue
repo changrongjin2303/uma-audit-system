@@ -779,6 +779,7 @@
       :material-id="selectedMaterialId"
       @close="handleAnalysisDetailDialogClose"
       @refresh="handleMaterialRefresh"
+      @reviewed="handleMaterialReviewed"
     />
   </div>
 </template>
@@ -2009,6 +2010,77 @@ const handleAnalysisDetailDialogClose = () => {
 const handleMaterialRefresh = () => {
   fetchMaterials()
   fetchProjectStats()
+}
+
+// 处理材料判定完成事件，自动跳转下一条
+const handleMaterialReviewed = async ({ id, isMatched }) => {
+  console.log('handleMaterialReviewed called with:', { id, isMatched, typeOfId: typeof id })
+  
+  // 1. 在当前列表中找到刚才处理的材料，更新其状态
+  // 使用 loose equality (==) 以兼容 string/number id 差异
+  const processedMaterial = materials.value.find(m => m.id == id)
+  if (processedMaterial) {
+    console.log('Found processed material:', processedMaterial.material_name)
+    processedMaterial.is_matched = isMatched
+    processedMaterial.needs_review = false 
+  } else {
+    console.warn('Could not find processed material in current list with id:', id)
+    // 如果找不到，可能是因为列表已经被刷新，或者是 ID 类型问题
+    // 尝试打印前几个 ID 的类型
+    if (materials.value.length > 0) {
+      console.log('First material ID type:', typeof materials.value[0].id, 'Value:', materials.value[0].id)
+    }
+  }
+
+  // 刷新统计信息 (非阻塞)
+  fetchProjectStats()
+
+  // 2. 查找下一条需要人工复核的材料
+  // 同样使用 loose equality
+  const currentIndex = materials.value.findIndex(m => m.id == id)
+  console.log('Current index:', currentIndex)
+  let nextMaterial = null
+  
+  if (currentIndex !== -1) {
+    // 从当前位置往后找
+    for (let i = currentIndex + 1; i < materials.value.length; i++) {
+      const m = materials.value[i]
+      // console.log(`Checking material at index ${i}:`, { name: m.material_name, is_matched: m.is_matched, needs_review: m.needs_review })
+      if (!m.is_matched && m.needs_review) {
+        nextMaterial = m
+        console.log('Found next material:', m.material_name)
+        break
+      }
+    }
+  }
+
+  if (nextMaterial) {
+    console.log('Switching to next material:', nextMaterial.id)
+    ElMessage.success({
+      message: '已完成判定，自动跳转到下一条待复核材料',
+      duration: 2000
+    })
+    selectedMaterialId.value = nextMaterial.id
+  } else {
+    console.log('No next material found in current page.')
+    
+    // 检查是否还有其他待复核（可能在不同页）
+    // 注意：这里使用的是 projectStats，它可能有一点延迟，但通常足够准确
+    const hasMoreTotal = (projectStats.value.needs_review_materials || 0) > 0
+    console.log('Has more total?', hasMoreTotal, 'Stats:', projectStats.value)
+    
+    if (hasMoreTotal) {
+       // 如果当前页没有了，但总数还有，说明在其他页
+       // TODO: 自动翻页功能比较复杂，暂时提示用户
+       ElMessage.info('当前页待复核材料已处理完毕，请翻页查看更多')
+       showAnalysisDetailDialog.value = false
+       fetchMaterials() // 刷新列表以便用户看到更新后的状态
+    } else {
+       ElMessage.success('所有待复核材料已全部处理完毕！')
+       showAnalysisDetailDialog.value = false 
+       fetchMaterials()
+    }
+  }
 }
 
 // 删除项目材料

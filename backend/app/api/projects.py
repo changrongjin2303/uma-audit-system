@@ -593,6 +593,10 @@ async def get_project_materials(
     if needs_review is not None and hasattr(ProjectMaterial, 'needs_review'):
         try:
             count_stmt = count_stmt.where(ProjectMaterial.needs_review == needs_review)
+            # 如果筛选需人工复核，且未指定匹配状态，则默认只显示未匹配的
+            # 这与 get_project_stats 中的统计逻辑保持一致
+            if needs_review is True and is_matched is None:
+                count_stmt = count_stmt.where(ProjectMaterial.is_matched == False)
         except Exception:
             pass  # 字段不存在，忽略
     if is_problematic is not None:

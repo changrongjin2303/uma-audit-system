@@ -19,6 +19,7 @@ from app.utils.unit_conversion import (
     can_convert_units,
     get_conversion_factor,
     convert_unit_price,
+    convert_unit_price_with_spec,
 )
 
 logger = logging.getLogger(__name__)
@@ -316,25 +317,37 @@ class PricedMaterialAnalysisService:
         project_unit = normalize_unit(project_unit_raw)
         base_unit = normalize_unit(base_unit_raw)
 
+        # 调试日志
+        logger.info(f"Analysis Debug: material={material.material_name}, base_price={base_price}, base_unit={base_unit}, project_unit={project_unit}, spec={material.base_specification}")
+
         conversion_factor = Decimal("1")
         conversion_applied = False
 
         if base_unit and project_unit and base_unit != project_unit:
-            if can_convert_units(base_unit, project_unit):
-                factor = get_conversion_factor(base_unit, project_unit)
-                if factor is None:
-                    raise ValueError(
-                        f"材料 {material.material_name} 的单位无法换算: 项目单位 {project_unit_raw}, 基准单位 {base_unit_raw}"
-                    )
+            # 尝试带规格的换算 (优先处理张->m2等特殊换算，如果不行则回退到通用换算)
+            # base_specification 通常是市场材料的规格
+            spec_for_conversion = material.base_specification or ""
+            
+            logger.info(f"Attempting conversion with spec: {spec_for_conversion}")
+
+            converted_excl = convert_unit_price_with_spec(base_price, base_unit, project_unit, spec_for_conversion)
+            converted_incl = convert_unit_price_with_spec(base_price_including_tax, base_unit, project_unit, spec_for_conversion)
+            
+            logger.info(f"Conversion result: excl={converted_excl}, incl={converted_incl}")
+            
+            if converted_excl is not None and converted_incl is not None:
                 conversion_applied = True
-                conversion_factor = factor
-                # 将“每 base_unit 的价格”换算为“每 project_unit 的价格”，应当除以换算系数
-                converted_excl = convert_unit_price(base_price, base_unit, project_unit)
-                converted_incl = convert_unit_price(base_price_including_tax, base_unit, project_unit)
-                if converted_excl is None or converted_incl is None:
-                    raise ValueError(
-                        f"材料 {material.material_name} 的单位换算失败: 项目单位 {project_unit_raw}, 基准单位 {base_unit_raw}"
-                    )
+                
+                # 计算换算系数用于记录
+                # 价格换算公式: P_to = P_from / factor  => factor = P_from / P_to
+                if converted_excl > 0:
+                    conversion_factor = base_price / converted_excl
+                elif can_convert_units(base_unit, project_unit):
+                    # 如果价格为0但单位可换算，尝试获取标准系数
+                    f = get_conversion_factor(base_unit, project_unit)
+                    if f:
+                        conversion_factor = f
+                
                 base_price = converted_excl.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
                 base_price_including_tax = converted_incl.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
                 base_price_excluding_tax = base_price
@@ -371,7 +384,15 @@ class PricedMaterialAnalysisService:
                     price_in_project_unit = price_decimal
 
                     if project_unit and related_unit_norm and related_unit_norm != project_unit:
-                        if can_convert_units(related_unit_norm, project_unit):
+                        # 使用带规格的转换逻辑，确保合同期内价格单位也能正确转换
+                        spec_for_conversion = material.base_specification or ""
+                        converted_value = convert_unit_price_with_spec(price_decimal, related_unit_norm, project_unit, spec_for_conversion)
+                        
+                        if converted_value is not None:
+                            price_in_project_unit = Decimal(str(converted_value)).quantize(
+                                Decimal("0.0001"), rounding=ROUND_HALF_UP
+                            )
+                        elif can_convert_units(related_unit_norm, project_unit):
                             converted_value = convert_unit_price(price_decimal, related_unit_norm, project_unit)
                             if converted_value is None:
                                 continue

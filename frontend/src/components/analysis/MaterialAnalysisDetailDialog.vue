@@ -516,11 +516,13 @@
           <template #header>
             <div class="card-header">
               <el-icon><Warning /></el-icon>
-              <span>AI分析结果</span>
+              <span>{{ detailData.project_material?.is_matched ? '价格分析结果' : 'AI分析结果' }}</span>
               <el-tag type="info" size="small">未分析</el-tag>
             </div>
           </template>
-          <el-empty description="该材料尚未进行AI价格分析，请先执行价格分析" />
+          <el-empty :description="detailData.project_material?.is_matched ? '该材料尚未进行价格分析，请先执行分析' : '该材料尚未进行AI价格分析，请先执行价格分析'">
+            <el-button type="primary" @click="handleStartAnalysis">开始分析</el-button>
+          </el-empty>
         </el-card>
       </div>
     </template>
@@ -632,7 +634,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'refresh'])
+const emit = defineEmits(['update:modelValue', 'close', 'refresh', 'reviewed'])
 
 const router = useRouter()
 const dialogVisible = ref(false)
@@ -782,6 +784,21 @@ const getUnitConversionFactor = (fromUnit, toUnit) => {
 
 // 单位转换信息（用于显示）
 const unitConversionInfo = computed(() => {
+  // 优先使用后端返回的单位转换信息
+  if (detailData.value?.analysis_result?.unit_conversion) {
+    const backendConversion = detailData.value.analysis_result.unit_conversion
+    if (backendConversion.applied) {
+      return {
+        needsConversion: true,
+        canConvert: true,
+        projectUnit: backendConversion.project_unit,
+        baseUnit: backendConversion.base_unit,
+        factor: backendConversion.factor,
+        message: `已将 ${backendConversion.base_unit} 转换为 ${backendConversion.project_unit}（系数: ${backendConversion.factor.toFixed(4)}）`
+      }
+    }
+  }
+
   const projectUnit = detailData.value?.project_material?.unit
   const baseUnit = detailData.value?.matched_base_material?.unit
   
@@ -824,45 +841,72 @@ const unitConversionInfo = computed(() => {
 
 // 转换后的基期信息价（按项目材料单位计算）
 const convertedBasePrice = computed(() => {
+  // 如果后端已经返回了转换后的基期信息价，直接使用
+  // 注意：后端返回的 analysis_result 中包含已经计算好的价格差异等，但也包含了原始的 base_price
+  // 如果后端已经应用了转换，analysis_result.original_base_price 可能是转换前的
+  // 但我们这里想要的是“转换后的基准价”以便在前端显示和计算
+  
+  // 检查后端是否应用了转换
+  const backendConversion = detailData.value?.analysis_result?.unit_conversion
+  if (backendConversion?.applied) {
+    // 如果后端应用了转换，original_base_price 通常是转换前的价格
+    // 我们可以用 original_base_price / factor 来计算，或者直接看后端有没有返回转换后的字段
+    // 后端返回了 unit_price_difference = project_price - converted_base_price
+    // 所以 converted_base_price = project_price - unit_price_difference
+    const projectPrice = detailData.value?.project_material?.unit_price
+    const diff = detailData.value?.analysis_result?.unit_price_difference
+    if (projectPrice !== undefined && diff !== undefined) {
+      return projectPrice - diff
+    }
+    
+    // 或者手动计算：
+    const basePrice = detailData.value?.matched_base_material?.price
+    if (basePrice !== null && basePrice !== undefined && backendConversion.factor) {
+       return basePrice / backendConversion.factor
+    }
+  }
+
   const basePrice = detailData.value?.matched_base_material?.price
   if (basePrice === null || basePrice === undefined) return null
   
   const conversionFactor = unitConversionInfo.value?.factor || 1
-  // 价格转换：原价格 / 转换系数
-  // 例如：4684元/t，转换系数1000，结果 = 4684/1000 = 4.684元/kg
   return basePrice / conversionFactor
 })
 
 // 转换后的合同期平均价（按项目材料单位计算）
 const convertedContractAvgPrice = computed(() => {
+  // 优先使用后端返回的已计算好的合同期平均价
+  // 后端 analysis_result.base_unit_price 字段实际上存储的是合同期平均价（变量名有点误导，但在后端代码里 contract_average_price 赋值给了 base_unit_price）
+  // 且后端已经处理了单位转换
+  const backendAvgPrice = detailData.value?.analysis_result?.base_unit_price
+  if (backendAvgPrice !== undefined && backendAvgPrice !== null) {
+      return backendAvgPrice
+  }
+
   const contractAvgPrice = detailData.value?.analysis_result?.contract_average_price
   if (contractAvgPrice === null || contractAvgPrice === undefined) return null
   
   const conversionFactor = unitConversionInfo.value?.factor || 1
-  // 如果合同期平均价是基于市场信息价单位计算的，需要转换
-  // 但通常合同期平均价应该已经是按项目材料单位的
-  // 这里需要判断合同期平均价的单位来源
-  
-  // 检查合同期平均价是否接近项目材料单价（说明已按项目单位计算）
+  // ... (原有逻辑保留作为兜底，虽然可能不太准确)
   const projectPrice = detailData.value?.project_material?.unit_price
   if (projectPrice && Math.abs(contractAvgPrice - projectPrice) / projectPrice < 0.5) {
-    // 合同期平均价接近项目单价，说明已经是项目单位，无需转换
     return contractAvgPrice
   }
   
-  // 检查合同期平均价是否接近基期信息价（说明是市场单位）
   const basePrice = detailData.value?.matched_base_material?.price
   if (basePrice && conversionFactor !== 1 && Math.abs(contractAvgPrice - basePrice) / basePrice < 0.5) {
-    // 合同期平均价接近基期信息价，需要转换
     return contractAvgPrice / conversionFactor
   }
   
-  // 默认假设合同期平均价已经是项目单位
   return contractAvgPrice
 })
 
-// 价格差异：项目材料单价 - 转换后的基期信息价
+// 价格差异：优先使用后端返回的结果
 const priceDifference = computed(() => {
+  if (detailData.value?.analysis_result?.unit_price_difference !== undefined) {
+      return detailData.value.analysis_result.unit_price_difference
+  }
+
   const projectPrice = detailData.value?.project_material?.unit_price
   const basePrice = convertedBasePrice.value
   if (projectPrice === null || projectPrice === undefined || basePrice === null || basePrice === undefined) {
@@ -871,8 +915,12 @@ const priceDifference = computed(() => {
   return projectPrice - basePrice
 })
 
-// 风险幅度：(合同期平均价 - 转换后的基期信息价) / 转换后的基期信息价
+// 风险幅度：优先使用后端返回的结果
 const riskRate = computed(() => {
+  if (detailData.value?.analysis_result?.price_difference_rate !== undefined) {
+      return detailData.value.analysis_result.price_difference_rate
+  }
+
   const contractAvgPrice = convertedContractAvgPrice.value
   const basePrice = convertedBasePrice.value
   if (contractAvgPrice === null || contractAvgPrice === undefined || basePrice === null || basePrice === undefined || basePrice === 0) {
@@ -881,8 +929,13 @@ const riskRate = computed(() => {
   return (contractAvgPrice - basePrice) / basePrice
 })
 
-// 调差：风险幅度在±5%以内则为0，超过部分乘以数量
+// 调差：优先使用后端返回的结果
 const priceAdjustment = computed(() => {
+  if (detailData.value?.analysis_result?.total_price_difference !== undefined) {
+      return detailData.value.analysis_result.total_price_difference
+  }
+
+  // ... (原有兜底逻辑)
   const contractAvgPrice = convertedContractAvgPrice.value
   const basePrice = convertedBasePrice.value
   const quantity = detailData.value?.analysis_result?.quantity ?? detailData.value?.project_material?.quantity
@@ -898,18 +951,14 @@ const priceAdjustment = computed(() => {
   const currentRiskRate = (contractAvgPrice - basePrice) / basePrice
   const threshold = 0.05 // ±5%
   
-  // 如果风险幅度在±5%以内，调差为0
   if (currentRiskRate >= -threshold && currentRiskRate <= threshold) {
     return 0
   }
   
-  // 超过±5%的部分计算调差
   let excessPerUnit = 0
   if (currentRiskRate > threshold) {
-    // 价格偏高，超出上限的部分
     excessPerUnit = contractAvgPrice - basePrice * (1 + threshold)
   } else {
-    // 价格偏低，超出下限的部分（负值）
     excessPerUnit = contractAvgPrice - basePrice * (1 - threshold)
   }
   
@@ -920,6 +969,13 @@ const priceAdjustment = computed(() => {
 watch(() => props.modelValue, (newVal) => {
   dialogVisible.value = newVal
   if (newVal && props.materialId) {
+    loadMaterialDetail()
+  }
+})
+
+// 监听 materialId 变化，支持在打开状态下切换材料
+watch(() => props.materialId, (newVal) => {
+  if (props.modelValue && newVal) {
     loadMaterialDetail()
   }
 })
@@ -992,27 +1048,47 @@ const handleClose = () => {
   emit('close')
 }
 
+// 开始分析
+const handleStartAnalysis = () => {
+  const material = detailData.value?.project_material
+  if (!material) return
+  
+  if (material.is_matched) {
+    // 已匹配：触发市场信息价分析
+    loading.value = true
+    analyzePricedMaterials(material.project_id, {
+      material_ids: [material.id],
+      force_reanalyze: true,
+      __skipLoading: true
+    }).then(() => {
+       // 重新加载详情以获取分析结果
+       loadMaterialDetail()
+    }).catch(err => {
+        console.error('分析失败:', err)
+        ElMessage.error('分析失败: ' + (err.message || '未知错误'))
+        loading.value = false
+    })
+  } else {
+    // 未匹配：打开AI模型选择对话框
+    showModelSelectDialog.value = true
+  }
+}
+
 // 人工判定处理
 const handleReview = async (isMatched) => {
   const material = detailData.value?.project_material
   if (!material) return
 
-  // 如果判定为未匹配，先弹出模型选择对话框
-  if (!isMatched) {
-    showModelSelectDialog.value = true
-    return
-  }
-
-  // 判定为已匹配的逻辑（保持不变）
-  const actionText = '已匹配'
+  const actionText = isMatched ? '已匹配' : '未匹配'
+  
   try {
     await ElMessageBox.confirm(
-      `确定将该材料判定为"${actionText}"吗？判定后系统将自动进行市场信息价分析。`,
+      `确定将该材料判定为"${actionText}"吗？判定后将放入对应分类，需手动进行分析。`,
       '人工判定',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'success'
+        type: isMatched ? 'success' : 'warning'
       }
     )
 
@@ -1020,29 +1096,23 @@ const handleReview = async (isMatched) => {
     
     // 1. 更新材料状态
     await updateProjectMaterial(material.project_id, material.id, {
-      is_matched: true,
+      is_matched: isMatched,
       needs_review: false,
       match_method: 'manual_review'
     })
     
-    ElMessage.success(`已判定为${actionText}，正在进行分析...`)
+    ElMessage.success(`已判定为${actionText}，请在分析详情中进行分析`)
 
-    // 2. 触发市场信息价材料分析
-    try {
-      await analyzePricedMaterials(material.project_id, {
-        material_ids: [material.id],
-        force_reanalyze: true,
-        __skipLoading: true
-      })
-      ElMessage.success('分析完成')
-    } catch (analysisError) {
-      console.error('分析失败:', analysisError)
-      ElMessage.warning('状态更新成功，但后续分析失败: ' + (analysisError.message || '未知错误'))
-    }
+    // 2. 不自动触发分析，只更新状态
     
-    // 3. 刷新数据
-    await loadMaterialDetail()
-    emit('refresh')
+    // 3. 立即跳转
+    emit('reviewed', { id: material.id, isMatched: isMatched })
+    
+    // 本地更新状态
+    if (detailData.value && detailData.value.project_material) {
+        detailData.value.project_material.is_matched = isMatched
+        detailData.value.project_material.needs_review = false
+    }
     
   } catch (error) {
     if (error !== 'cancel') {
@@ -1076,28 +1146,37 @@ const handleModelSelectConfirm = async () => {
       match_method: 'manual_review'
     })
     
-    ElMessage.success(`已判定为未匹配，正在后台使用 ${modelName} 进行分析...`)
+    ElMessage.success(`已判定为未匹配，AI分析将在后台进行`)
 
-    // 2. 触发AI分析（后台运行）
-    // 不使用 await 阻塞，或者 catch 错误不影响 UI 状态
+    // 2. 触发AI分析（后台运行，完全不阻塞UI）
     analyzeSingleMaterial(material.id, {
         preferred_provider: selectedAIModel.value,
         force_reanalyze: true
     }).then(() => {
-        ElMessage.success('AI分析完成，请刷新查看结果')
-        // 如果当前还在查看该材料，自动刷新
-        if (detailData.value?.project_material?.id === material.id) {
-            loadMaterialDetail()
-        }
-        emit('refresh')
+        // 分析完成后的回调（如果用户还停留在当前页面，可以刷新）
+        console.log(`后台AI分析完成: ${material.id}`)
     }).catch(err => {
         console.error('后台AI分析失败:', err)
-        ElMessage.error(`AI分析失败: ${err.message}`)
+        ElNotification.error({
+          title: 'AI分析失败',
+          message: `${material.material_name}: ${err.message}`
+        })
     })
 
-    // 3. 立即刷新当前视图（显示为未匹配状态）
-    await loadMaterialDetail()
-    emit('refresh')
+    // 3. 立即发出完成事件，让父组件跳转下一条
+    // 注意：这里不再等待 loadMaterialDetail，以实现秒切
+    
+    // 先刷新列表状态（非阻塞）
+    // emit('refresh') // 暂时移除refresh，避免 race condition
+    
+    // 发出已完成判定的事件，告知父组件可以跳转下一条
+    emit('reviewed', { id: material.id, isMatched: false })
+    
+    // 本地更新当前数据状态（以防万一没跳转）
+    if (detailData.value && detailData.value.project_material) {
+        detailData.value.project_material.is_matched = false
+        detailData.value.project_material.needs_review = false
+    }
 
   } catch (error) {
     console.error('判定失败:', error)
