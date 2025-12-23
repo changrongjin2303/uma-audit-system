@@ -693,6 +693,10 @@ class ReportService:
             # 找到对应的价格分析
             analysis = next((a for a in analyses if a.material_id == material.id), None)
             
+            # 如果是市场信息价材料分析（表2数据），则跳过，不应出现在表1中
+            if analysis and analysis.analysis_model == "guided_price_comparison":
+                continue
+            
             # 计算相关价格数据
             original_price = material.unit_price or 0
             quantity = material.quantity or 1
