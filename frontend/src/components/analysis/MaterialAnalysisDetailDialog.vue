@@ -555,6 +555,60 @@
         </el-button>
       </span>
     </template>
+
+    <!-- AI模型选择对话框 -->
+    <el-dialog
+      v-model="showModelSelectDialog"
+      title="选择AI分析模型"
+      width="480px"
+      :close-on-click-modal="false"
+      center
+      append-to-body
+      class="ai-model-select-dialog"
+    >
+      <div class="model-select-content">
+        <p class="model-select-hint">请选择用于价格分析的AI大模型：</p>
+        <el-radio-group v-model="selectedAIModel" class="model-radio-group">
+          <el-radio value="dashscope" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><Promotion /></el-icon>
+                通义千问 (Qwen)
+              </div>
+              <div class="model-desc">阿里云通义千问大模型，支持联网搜索</div>
+            </div>
+          </el-radio>
+          <el-radio value="doubao" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><MagicStick /></el-icon>
+                豆包 (Doubao)
+              </div>
+              <div class="model-desc">字节跳动豆包大模型，高性能推理</div>
+            </div>
+          </el-radio>
+          <el-radio value="deepseek" size="large" border class="model-radio-item">
+            <div class="model-info">
+              <div class="model-name">
+                <el-icon><ChatDotRound /></el-icon>
+                DeepSeek (V3)
+              </div>
+              <div class="model-desc">深度求索DeepSeek-V3模型，超强推理能力</div>
+            </div>
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <template #footer>
+        <el-button @click="showModelSelectDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          :disabled="!selectedAIModel"
+          @click="handleModelSelectConfirm"
+        >
+          开始分析
+        </el-button>
+      </template>
+    </el-dialog>
   </el-dialog>
 </template>
 
@@ -562,8 +616,8 @@
 import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Connection, Warning, TrendCharts } from '@element-plus/icons-vue'
-import { getMaterialAnalysisDetail } from '@/api/analysis'
+import { Document, Connection, Warning, TrendCharts, Promotion, MagicStick, ChatDotRound } from '@element-plus/icons-vue'
+import { getMaterialAnalysisDetail, analyzePricedMaterials, analyzeSingleMaterial } from '@/api/analysis'
 import { updateProjectMaterial } from '@/api/projects'
 import { formatAnalysisDataSources, getDataSourceNote } from '@/utils/dataSourceUtils'
 
@@ -585,6 +639,10 @@ const dialogVisible = ref(false)
 const loading = ref(false)
 const detailData = ref(null)
 const error = ref('')
+
+// AI模型选择相关
+const showModelSelectDialog = ref(false)
+const selectedAIModel = ref('dashscope') // 默认使用通义千问
 
 const dataSourceRows = computed(() =>
   formatAnalysisDataSources(detailData.value?.analysis_result || null)
@@ -939,31 +997,51 @@ const handleReview = async (isMatched) => {
   const material = detailData.value?.project_material
   if (!material) return
 
-  const actionText = isMatched ? '已匹配' : '未匹配'
-  
+  // 如果判定为未匹配，先弹出模型选择对话框
+  if (!isMatched) {
+    showModelSelectDialog.value = true
+    return
+  }
+
+  // 判定为已匹配的逻辑（保持不变）
+  const actionText = '已匹配'
   try {
     await ElMessageBox.confirm(
-      `确定将该材料判定为"${actionText}"吗？`,
+      `确定将该材料判定为"${actionText}"吗？判定后系统将自动进行市场信息价分析。`,
       '人工判定',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: isMatched ? 'success' : 'warning'
+        type: 'success'
       }
     )
 
     loading.value = true
+    
+    // 1. 更新材料状态
     await updateProjectMaterial(material.project_id, material.id, {
-      is_matched: isMatched,
+      is_matched: true,
       needs_review: false,
       match_method: 'manual_review'
     })
-
-    ElMessage.success(`已判定为${actionText}`)
     
-    // 刷新数据
+    ElMessage.success(`已判定为${actionText}，正在进行分析...`)
+
+    // 2. 触发市场信息价材料分析
+    try {
+      await analyzePricedMaterials(material.project_id, {
+        material_ids: [material.id],
+        force_reanalyze: true,
+        __skipLoading: true
+      })
+      ElMessage.success('分析完成')
+    } catch (analysisError) {
+      console.error('分析失败:', analysisError)
+      ElMessage.warning('状态更新成功，但后续分析失败: ' + (analysisError.message || '未知错误'))
+    }
+    
+    // 3. 刷新数据
     await loadMaterialDetail()
-    // 通知父组件刷新列表
     emit('refresh')
     
   } catch (error) {
@@ -971,6 +1049,59 @@ const handleReview = async (isMatched) => {
       console.error('判定失败:', error)
       ElMessage.error('判定失败: ' + (error.message || '未知错误'))
     }
+  } finally {
+    loading.value = false
+  }
+}
+
+// 确认未匹配判定并开始AI分析
+const handleModelSelectConfirm = async () => {
+  showModelSelectDialog.value = false
+  const material = detailData.value?.project_material
+  if (!material) return
+
+  let modelName = '通义千问'
+  if (selectedAIModel.value === 'doubao') {
+    modelName = '豆包'
+  } else if (selectedAIModel.value === 'deepseek') {
+    modelName = 'DeepSeek'
+  }
+
+  loading.value = true
+  try {
+    // 1. 更新材料状态
+    await updateProjectMaterial(material.project_id, material.id, {
+      is_matched: false,
+      needs_review: false,
+      match_method: 'manual_review'
+    })
+    
+    ElMessage.success(`已判定为未匹配，正在后台使用 ${modelName} 进行分析...`)
+
+    // 2. 触发AI分析（后台运行）
+    // 不使用 await 阻塞，或者 catch 错误不影响 UI 状态
+    analyzeSingleMaterial(material.id, {
+        preferred_provider: selectedAIModel.value,
+        force_reanalyze: true
+    }).then(() => {
+        ElMessage.success('AI分析完成，请刷新查看结果')
+        // 如果当前还在查看该材料，自动刷新
+        if (detailData.value?.project_material?.id === material.id) {
+            loadMaterialDetail()
+        }
+        emit('refresh')
+    }).catch(err => {
+        console.error('后台AI分析失败:', err)
+        ElMessage.error(`AI分析失败: ${err.message}`)
+    })
+
+    // 3. 立即刷新当前视图（显示为未匹配状态）
+    await loadMaterialDetail()
+    emit('refresh')
+
+  } catch (error) {
+    console.error('判定失败:', error)
+    ElMessage.error('判定失败: ' + (error.message || '未知错误'))
   } finally {
     loading.value = false
   }
@@ -1471,6 +1602,85 @@ const getSearchUrls = (analysisResult) => {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
+  }
+}
+
+.ai-model-select-dialog {
+  .model-select-content {
+    padding: 0 20px;
+    
+    .model-select-hint {
+      margin: 0 0 20px 0;
+      font-size: 14px;
+      color: #909399;
+      text-align: center;
+    }
+    
+    .model-radio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      width: 100%;
+      
+      .model-radio-item {
+        width: 100%;
+        height: auto !important;
+        padding: 16px 20px !important;
+        margin: 0 !important;
+        border-radius: 12px !important;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: flex-start;
+        
+        &:hover {
+          border-color: #409eff;
+          box-shadow: 0 4px 12px rgba(64, 158, 255, 0.15);
+        }
+        
+        &.is-checked {
+          border-color: #409eff;
+          background: linear-gradient(135deg, rgba(64, 158, 255, 0.08) 0%, rgba(64, 158, 255, 0.02) 100%);
+          box-shadow: 0 4px 16px rgba(64, 158, 255, 0.2);
+        }
+        
+        :deep(.el-radio__input) {
+          margin-top: 4px;
+        }
+        
+        :deep(.el-radio__label) {
+          white-space: normal;
+          width: 100%;
+          padding-left: 12px;
+        }
+        
+        .model-info {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+          
+          .model-name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #303133;
+            margin-bottom: 6px;
+            
+            .el-icon {
+              font-size: 20px;
+              color: #409eff;
+            }
+          }
+          
+          .model-desc {
+            font-size: 13px;
+            color: #909399;
+            line-height: 1.4;
+          }
+        }
+      }
+    }
   }
 }
 
