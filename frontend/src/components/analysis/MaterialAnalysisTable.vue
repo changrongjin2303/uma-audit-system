@@ -102,9 +102,13 @@
           label="核增（减）额"
           width="120"
           align="center"
-          :formatter="formatAdjustment"
-          :class-name="getAdjustmentClass"
-        />
+        >
+          <template #default="{ row }">
+            <span :class="getAdjustmentClass({ row })">
+              {{ formatAdjustment(null, null, row.adjustment) }}
+            </span>
+          </template>
+        </el-table-column>
         
         <el-table-column
           prop="weightPercentage"
@@ -144,7 +148,7 @@
         </el-col>
         <el-col :span="6">
           <div class="summary-item">
-            <div class="summary-label">核减总额</div>
+            <div class="summary-label">核增（减）总额</div>
             <div class="summary-value" :class="getAdjustmentSummaryClass()">
               {{ formatCurrency(statistics.totalAdjustment) }}
             </div>

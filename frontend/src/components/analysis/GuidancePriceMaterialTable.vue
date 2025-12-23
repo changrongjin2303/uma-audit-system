@@ -104,6 +104,7 @@
               <span :class="getDifferenceClass(calculatePriceDiff(row))">
                 {{ formatCurrency(null, null, calculatePriceDiff(row)) }}
               </span>
+              <span class="unit-text">/{{ row.unit }}</span>
             </template>
           </el-table-column>
 
@@ -124,7 +125,7 @@
             align="center"
           >
             <template #default="{ row }">
-              <span :class="getDifferenceClass(calculatePriceDiff(row))">
+              <span :class="getDifferenceClass(calculateRiskRate(row))">
                 {{ formatPercent(null, null, calculateRiskRate(row)) }}
               </span>
             </template>
@@ -136,11 +137,9 @@
           label="调差"
           width="120"
           align="center"
-          :formatter="formatAdjustment"
-          :class-name="getAdjustmentClass"
         >
           <template #default="{ row }">
-             <span :class="getDifferenceClass(calculatePriceDiff(row))">
+             <span :class="getDifferenceClass(calculateAdjustmentDiff(row))">
                {{ formatCurrency(null, null, calculateAdjustmentDiff(row)) }}
              </span>
           </template>
