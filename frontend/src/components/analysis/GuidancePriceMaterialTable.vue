@@ -513,7 +513,9 @@ const processGuidancePriceData = (data) => {
     riskRate: item.risk_rate !== undefined ? Number(item.risk_rate) : undefined
   }))
 
-  const diffFiltered = mapped.filter(item => Math.abs(item.adjustment || 0) > 1e-6)
+  // 移除过滤逻辑，显示所有数据，确保与项目详情页一致
+  // const diffFiltered = mapped.filter(item => Math.abs(item.adjustment || 0) > 1e-6)
+  const diffFiltered = mapped
   const totalOriginal = diffFiltered.reduce((sum, item) => sum + Math.abs(item.originalTotalPrice || 0), 0)
 
   return diffFiltered.map((item, idx) => ({

@@ -316,21 +316,24 @@ async def get_priced_materials_analysis(
         # 构建筛选条件
         conditions = [
             ProjectMaterial.project_id == project_id,
-            PriceAnalysis.analysis_model == "guided_price_comparison"
+            ProjectMaterial.is_matched == True
         ]
         
+        # 如果有分析相关的筛选条件，需要构建动态查询
+        analysis_conditions = []
         if analysis_status:
-            conditions.append(PriceAnalysis.status == analysis_status)
+            analysis_conditions.append(PriceAnalysis.status == analysis_status)
             
         if risk_level:
-            conditions.append(PriceAnalysis.risk_level == risk_level)
+            analysis_conditions.append(PriceAnalysis.risk_level == risk_level)
 
         if material_name:
             conditions.append(ProjectMaterial.material_name.ilike(f"%{material_name}%"))
         
         # 从数据库获取已保存的市场信息价分析结果
+        # 使用左连接确保所有已匹配的材料都能显示，即使分析结果缺失
         stmt = select(
-            PriceAnalysis.material_id,
+            ProjectMaterial.id.label("material_id"),
             PriceAnalysis.api_response,
             PriceAnalysis.analysis_reasoning,
             PriceAnalysis.created_at,
@@ -339,12 +342,19 @@ async def get_priced_materials_analysis(
             ProjectMaterial.unit,
             ProjectMaterial.quantity
         ).select_from(
-            PriceAnalysis.__table__.join(
-                ProjectMaterial, PriceAnalysis.material_id == ProjectMaterial.id
+            ProjectMaterial.__table__.outerjoin(
+                PriceAnalysis,
+                ProjectMaterial.id == PriceAnalysis.material_id
             )
         ).where(
             and_(*conditions)
-        ).offset(skip).limit(limit)
+        )
+        
+        # 应用分析相关的筛选条件
+        if analysis_conditions:
+            stmt = stmt.where(and_(*analysis_conditions))
+            
+        stmt = stmt.offset(skip).limit(limit)
         
         result = await db.execute(stmt)
         analysis_records = result.all()
@@ -404,13 +414,26 @@ async def get_priced_materials_analysis(
                 continue
         
         # 获取总数
-        count_stmt = select(func.count(PriceAnalysis.id)).select_from(
-            PriceAnalysis.__table__.join(
-                ProjectMaterial, PriceAnalysis.material_id == ProjectMaterial.id
+        # 同样使用 ProjectMaterial.is_matched == True 进行统计
+        count_stmt = select(func.count(ProjectMaterial.id)).where(
+            and_(
+                ProjectMaterial.project_id == project_id,
+                ProjectMaterial.is_matched == True
             )
-        ).where(
-            and_(*conditions)
         )
+        
+        # 如果有分析相关的筛选条件，需要关联分析表
+        if analysis_conditions:
+            count_stmt = count_stmt.select_from(
+                ProjectMaterial.__table__.outerjoin(
+                    PriceAnalysis,
+                    and_(
+                        ProjectMaterial.id == PriceAnalysis.material_id,
+                        PriceAnalysis.analysis_model == "guided_price_comparison"
+                    )
+                )
+            ).where(and_(*analysis_conditions))
+            
         count_result = await db.execute(count_stmt)
         total = count_result.scalar() or 0
         
@@ -848,6 +871,9 @@ async def get_material_analysis_detail(
                 "has_matched_base_material": project_material.matched_material_id is not None,
                 "matched_base_material_id": project_material.matched_material_id,
                 "created_at": project_material.created_at.isoformat() if project_material.created_at else None,
+                "is_matched": project_material.is_matched,
+                "needs_review": project_material.needs_review,
+                "project_id": project_material.project_id,
                 "updated_at": None
             },
             "project_info": {

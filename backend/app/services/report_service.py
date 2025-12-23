@@ -329,21 +329,32 @@ class ReportService:
                 })
             
             # 生成完整的分析材料数据
-            analysis_materials = self._generate_analysis_materials_data(materials, analyses)
+            analysis_materials_full = self._generate_analysis_materials_data(materials, analyses)
             
-            # 筛选核增（减）额为正数的数据，并按权重百分比降序排序，显示全部数据
+            # 生成市场信息价材料数据
+            guidance_price_materials_full = await self._generate_guidance_price_materials_data(db, project_id, materials, analyses)
+            
+            # 过滤掉风险等级为正常(normal)的材料，与生成报告的逻辑保持一致
             analysis_materials = [
-                m for m in analysis_materials 
-                if m.get('adjustment', 0) > 0
+                m for m in analysis_materials_full
+                if (m.get('risk_level') or 'normal').lower() != 'normal'
             ]
+            
+            guidance_price_materials = [
+                m for m in guidance_price_materials_full
+                if (m.get('risk_level') or 'normal').lower() != 'normal'
+            ]
+            
             # 使用权重百分比进行排序，权重高的材料排在前面
             analysis_materials.sort(
                 key=lambda x: x.get('weight_percentage', 0),
                 reverse=True
             )
             
-            # 生成市场信息价材料数据
-            guidance_price_materials = await self._generate_guidance_price_materials_data(db, project_id, materials, analyses)
+            guidance_price_materials.sort(
+                key=lambda x: x.get('weight_percentage', 0),
+                reverse=True
+            )
             
             return ReportPreviewResponse(
                 project_id=project.id,
@@ -690,12 +701,12 @@ class ReportService:
         result = []
         
         for material in materials:
+            # 如果是已匹配材料（表2数据），则跳过，确保与项目详情页逻辑一致
+            if material.is_matched:
+                continue
+                
             # 找到对应的价格分析
             analysis = next((a for a in analyses if a.material_id == material.id), None)
-            
-            # 如果是市场信息价材料分析（表2数据），则跳过，不应出现在表1中
-            if analysis and analysis.analysis_model == "guided_price_comparison":
-                continue
             
             # 计算相关价格数据
             original_price = material.unit_price or 0
@@ -761,25 +772,28 @@ class ReportService:
             from sqlalchemy import select, and_, func
             
             # 查询市场信息价材料分析结果
+            # 使用左连接确保所有已匹配的材料都能显示，即使分析结果缺失
             stmt = select(
-                PriceAnalysisModel.material_id,
+                ProjectMaterial.id.label("material_id"),
                 PriceAnalysisModel.api_response,
                 PriceAnalysisModel.created_at,
+                PriceAnalysisModel.risk_level,
                 ProjectMaterial.material_name,
                 ProjectMaterial.specification,
                 ProjectMaterial.unit,
                 ProjectMaterial.quantity,
                 ProjectMaterial.unit_price
             ).select_from(
-                PriceAnalysisModel.__table__.join(
-                    ProjectMaterial, PriceAnalysisModel.material_id == ProjectMaterial.id
+                ProjectMaterial.__table__.outerjoin(
+                    PriceAnalysisModel,
+                    PriceAnalysisModel.material_id == ProjectMaterial.id
                 )
             ).where(
                 and_(
                     ProjectMaterial.project_id == project_id,
-                    PriceAnalysisModel.analysis_model == "guided_price_comparison"
+                    ProjectMaterial.is_matched == True
                 )
-            )  # 显示所有市场信息价材料分析结果
+            )  # 显示所有已匹配材料，包括无分析结果的
             
             db_result = await db.execute(stmt)
             guidance_records = db_result.all()
@@ -810,6 +824,9 @@ class ReportService:
                 
                 # 获取价格数据
                 original_price = float(api_data.get('project_unit_price', 0))
+                if original_price == 0 and record.unit_price:
+                    original_price = float(record.unit_price)
+                    
                 guidance_price = float(api_data.get('base_unit_price', 0))
                 # 新增：获取基期信息价和单位，用于前端计算差异
                 original_base_price = float(api_data.get('original_base_price', 0) or 0)
@@ -861,7 +878,8 @@ class ReportService:
                     "guidance_total": guidance_total,
                     "adjustment": adjustment,
                     "price_diff": price_diff,
-                    "risk_rate": risk_rate
+                    "risk_rate": risk_rate,
+                    "risk_level": record.risk_level
                 })
             
             # 生成最终结果
@@ -886,6 +904,7 @@ class ReportService:
                     "adjustment": item_data["adjustment"],
                     "price_diff": item_data["price_diff"],
                     "risk_rate": item_data["risk_rate"],
+                    "risk_level": item_data["risk_level"],
                     "weight_percentage": round(weight_percentage, 1),
                     "material_type": "guidance_price"
                 }

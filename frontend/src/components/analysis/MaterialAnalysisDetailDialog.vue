@@ -539,6 +539,17 @@
     <template #footer>
       <span class="dialog-footer">
         <el-button @click="handleClose">关闭</el-button>
+        
+        <!-- 人工判定按钮 -->
+        <template v-if="detailData?.project_material && !detailData.project_material.is_matched && detailData.project_material.needs_review">
+          <el-button type="success" @click="handleReview(true)">
+            判定为已匹配
+          </el-button>
+          <el-button type="danger" @click="handleReview(false)">
+            判定为未匹配
+          </el-button>
+        </template>
+
         <el-button v-if="detailData?.project_material" type="primary" @click="goToMaterialDetail">
           查看完整详情
         </el-button>
@@ -550,8 +561,10 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Connection, Warning, TrendCharts } from '@element-plus/icons-vue'
 import { getMaterialAnalysisDetail } from '@/api/analysis'
+import { updateProjectMaterial } from '@/api/projects'
 import { formatAnalysisDataSources, getDataSourceNote } from '@/utils/dataSourceUtils'
 
 const props = defineProps({
@@ -565,7 +578,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'close'])
+const emit = defineEmits(['update:modelValue', 'close', 'refresh'])
 
 const router = useRouter()
 const dialogVisible = ref(false)
@@ -869,6 +882,19 @@ const loadMaterialDetail = async () => {
     const response = await getMaterialAnalysisDetail(props.materialId)
     if (response.code === 200) {
       detailData.value = response.data
+      
+      // 调试：检查项目材料状态
+      if (detailData.value?.project_material) {
+        console.log('材料详情状态检查:', {
+          id: detailData.value.project_material.id,
+          name: detailData.value.project_material.material_name,
+          is_matched: detailData.value.project_material.is_matched,
+          needs_review: detailData.value.project_material.needs_review,
+          project_id: detailData.value.project_material.project_id,
+          should_show_review_buttons: !detailData.value.project_material.is_matched && detailData.value.project_material.needs_review
+        })
+      }
+
       // 调试：检查数据源是否包含价格区间
       if (detailData.value?.analysis_result?.data_sources) {
         console.log('数据源信息:', detailData.value.analysis_result.data_sources)
@@ -906,6 +932,48 @@ const handleClose = () => {
   detailData.value = null
   error.value = ''
   emit('close')
+}
+
+// 人工判定处理
+const handleReview = async (isMatched) => {
+  const material = detailData.value?.project_material
+  if (!material) return
+
+  const actionText = isMatched ? '已匹配' : '未匹配'
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定将该材料判定为"${actionText}"吗？`,
+      '人工判定',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: isMatched ? 'success' : 'warning'
+      }
+    )
+
+    loading.value = true
+    await updateProjectMaterial(material.project_id, material.id, {
+      is_matched: isMatched,
+      needs_review: false,
+      match_method: 'manual_review'
+    })
+
+    ElMessage.success(`已判定为${actionText}`)
+    
+    // 刷新数据
+    await loadMaterialDetail()
+    // 通知父组件刷新列表
+    emit('refresh')
+    
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('判定失败:', error)
+      ElMessage.error('判定失败: ' + (error.message || '未知错误'))
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
 // 跳转到材料详情页面

@@ -778,6 +778,7 @@
       v-model="showAnalysisDetailDialog"
       :material-id="selectedMaterialId"
       @close="handleAnalysisDetailDialogClose"
+      @refresh="handleMaterialRefresh"
     />
   </div>
 </template>
@@ -1982,6 +1983,12 @@ const viewMaterialDetail = (material) => {
 const handleAnalysisDetailDialogClose = () => {
   showAnalysisDetailDialog.value = false
   selectedMaterialId.value = null
+}
+
+// 处理材料列表刷新
+const handleMaterialRefresh = () => {
+  fetchMaterials()
+  fetchProjectStats()
 }
 
 // 删除项目材料

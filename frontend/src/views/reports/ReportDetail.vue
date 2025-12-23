@@ -294,6 +294,9 @@ const prepareChartData = (analysisData = [], guidanceData = []) => {
     }
   })
 
+  // 过滤掉风险等级为正常(normal)的材料
+  const filteredAnalysisItems = analysisItems.filter(item => item.riskLevel !== 'normal')
+
   const guidanceItems = (guidanceData || []).map(item => {
     const originalTotal = item.original_total_price !== undefined
       ? normalizeNumber(item.original_total_price)
@@ -304,14 +307,22 @@ const prepareChartData = (analysisData = [], guidanceData = []) => {
     const adjustment = item.adjustment !== undefined
       ? normalizeNumber(item.adjustment)
       : originalTotal - guidanceTotal
+    
+    // 市场信息价材料也需要根据 risk_level 过滤，但需要确保 guidanceData 中包含 risk_level
+    // 后端已经确保返回 risk_level
+    const riskLevel = (item.risk_level || '').toLowerCase()
 
     return {
       name: item.material_name || item.name || '材料',
+      riskLevel: riskLevel || 'normal',
       adjustment,
       originalTotal,
       aiTotal: guidanceTotal
     }
   })
+
+  // 过滤掉风险等级为正常(normal)的材料
+  const filteredGuidanceItems = guidanceItems.filter(item => item.riskLevel !== 'normal')
 
   const combinedRisk = analysisItems.reduce((acc, item) => {
     const key = riskLabels[item.riskLevel] ? item.riskLevel : 'normal'
@@ -323,7 +334,8 @@ const prepareChartData = (analysisData = [], guidanceData = []) => {
     .filter(key => combinedRisk[key])
     .map(key => ({ name: riskLabels[key], value: combinedRisk[key], itemStyle: { color: riskColors[key] } }))
 
-  const adjustmentsMerged = [...analysisItems, ...guidanceItems]
+  // TOP10 和 总额对比 使用过滤后的数据
+  const adjustmentsMerged = [...filteredAnalysisItems, ...filteredGuidanceItems]
     .filter(item => Math.abs(item.adjustment) > 1e-2)
     .sort((a, b) => Math.abs(b.adjustment) - Math.abs(a.adjustment))
     .slice(0, 10)
@@ -333,10 +345,10 @@ const prepareChartData = (analysisData = [], guidanceData = []) => {
     value: Number(item.adjustment.toFixed(2))
   }))
 
-  const analysisTotalsOriginal = analysisItems.reduce((sum, item) => sum + item.originalTotal, 0)
-  const analysisTotalsAi = analysisItems.reduce((sum, item) => sum + item.aiTotal, 0)
-  const guidanceTotalsOriginal = guidanceItems.reduce((sum, item) => sum + item.originalTotal, 0)
-  const guidanceTotalsAi = guidanceItems.reduce((sum, item) => sum + item.aiTotal, 0)
+  const analysisTotalsOriginal = filteredAnalysisItems.reduce((sum, item) => sum + item.originalTotal, 0)
+  const analysisTotalsAi = filteredAnalysisItems.reduce((sum, item) => sum + item.aiTotal, 0)
+  const guidanceTotalsOriginal = filteredGuidanceItems.reduce((sum, item) => sum + item.originalTotal, 0)
+  const guidanceTotalsAi = filteredGuidanceItems.reduce((sum, item) => sum + item.aiTotal, 0)
 
   const totalsComparison = {
     categories: ['无信息价材料', '市场信息价材料'],

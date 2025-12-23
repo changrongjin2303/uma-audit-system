@@ -1212,6 +1212,7 @@ const fetchAnalysisResults = async () => {
           page, 
           size: materialChunkSize, 
           is_matched: false, // Unpriced only
+          needs_review: false, // Exclude needs review
           keyword: searchKeyword.value || undefined
         }, { __skipLoading: true })
         

@@ -264,7 +264,11 @@ class ReportGenerator:
         from app.services.report_service import ReportService
         report_service = ReportService()
 
+        # 使用 ReportService 的方法生成数据，并修正调用方式
+        # _generate_analysis_materials_data 是同步方法，参数仅需 materials 和 analyses
         analysis_materials_raw = report_service._generate_analysis_materials_data(materials, analyses)
+        
+        # _generate_guidance_price_materials_data 是异步方法
         guidance_materials_raw = await report_service._generate_guidance_price_materials_data(
             db, project.id, materials, analyses
         )
@@ -350,6 +354,101 @@ class ReportGenerator:
         analysis_materials_report = transform_analysis_items(analysis_materials_raw)
         guidance_materials_report = transform_guidance_items(guidance_materials_raw)
 
+        # 移除过滤逻辑，确保报告数据与系统数据一致
+        # 如果需要过滤，可以在 transform 函数内部进行标记，而不是直接跳过
+        # 目前 transform 函数会过滤掉 adjustment 绝对值小于 0.01 的项
+        # 考虑到用户需求 "Correct is should be completely consistent"，我们需要移除 transform 函数中的过滤逻辑
+        
+        # 重新定义 transform 函数以移除过滤逻辑
+        def transform_analysis_items_full(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            transformed: List[Dict[str, Any]] = []
+            for item in items:
+                quantity = float(item.get('quantity') or 0)
+                original_unit = float(item.get('original_price') or 0)
+                ai_unit = float(item.get('ai_predicted_price') or item.get('predicted_price') or 0)
+                original_total = float(item.get('original_total_price') or (original_unit * quantity))
+                ai_total = float(item.get('ai_total_price') or item.get('ai_total') or (ai_unit * quantity))
+                adjustment = float(item.get('adjustment')) if item.get('adjustment') is not None else original_total - ai_total
+                risk_level = (item.get('risk_level') or '').lower()
+                is_reasonable = item.get('is_reasonable')
+
+                # 移除过滤逻辑，保留所有项
+                transformed.append({
+                    'materialName': item.get('material_name', ''),
+                    'specification': item.get('specification', ''),
+                    'unit': item.get('unit', ''),
+                    'quantity': quantity,
+                    'originalUnitPrice': original_unit,
+                    'originalTotalPrice': original_total,
+                    'aiUnitPrice': ai_unit,
+                    'aiTotalPrice': ai_total,
+                    'adjustment': adjustment,
+                    'weightPercentage': 0.0,
+                    'riskLevel': risk_level or 'normal'
+                })
+
+            total_original = sum(abs(item['originalTotalPrice']) for item in transformed)
+            if total_original > 0:
+                for item in transformed:
+                    item['weightPercentage'] = (abs(item['originalTotalPrice']) / total_original) * 100
+
+            return transformed
+
+        def transform_guidance_items_full(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            transformed: List[Dict[str, Any]] = []
+            for item in items:
+                # 保留名称检查，排除无效数据
+                if item.get('material_name') in ['暂无市场信息价材料数据', '数据获取失败', None, '']:
+                    continue
+
+                quantity = float(item.get('quantity') or 0)
+                original_unit = float(item.get('original_price') or 0)
+                guidance_unit = float(item.get('guidance_price') or item.get('base_price') or 0)
+                original_total = float(item.get('original_total_price') or (original_unit * quantity))
+                guidance_total = float(item.get('guidance_total_price') or item.get('ai_total_price') or (guidance_unit * quantity))
+                adjustment = float(item.get('adjustment')) if item.get('adjustment') is not None else original_total - guidance_total
+
+                # 移除过滤逻辑，保留所有项
+                transformed.append({
+                    'materialName': item.get('material_name', ''),
+                    'specification': item.get('specification', ''),
+                    'unit': item.get('unit', ''),
+                    'quantity': quantity,
+                    'originalUnitPrice': original_unit,
+                    'originalTotalPrice': original_total,
+                    'aiUnitPrice': guidance_unit,
+                    'aiTotalPrice': guidance_total,
+                    'adjustment': adjustment,
+                    'originalBasePrice': float(item.get('original_base_price') or 0),
+                    'priceDiff': float(item.get('price_diff') or 0),
+                    'riskRate': float(item.get('risk_rate') or 0),
+                    'riskLevel': (item.get('risk_level') or '').lower(),
+                    'weightPercentage': 0.0
+                })
+
+            total_original = sum(abs(item['originalTotalPrice']) for item in transformed)
+            if total_original > 0:
+                for item in transformed:
+                    item['weightPercentage'] = (abs(item['originalTotalPrice']) / total_original) * 100
+
+            return transformed
+
+        # 使用新的 full 转换函数
+        analysis_materials_full = transform_analysis_items_full(analysis_materials_raw)
+        guidance_materials_full = transform_guidance_items_full(guidance_materials_raw)
+
+        # 过滤掉风险等级为正常(normal)的材料
+        # 用户需求：先进行过滤，把正常的材料直接忽略，剩下的再进行计算
+        analysis_materials_report = [
+            item for item in analysis_materials_full 
+            if item.get('riskLevel') != 'normal'
+        ]
+        
+        guidance_materials_report = [
+            item for item in guidance_materials_full 
+            if item.get('riskLevel') != 'normal'
+        ]
+
         def calc_totals(items: List[Dict[str, Any]]) -> Dict[str, float]:
             return {
                 'original_total': sum(item['originalTotalPrice'] for item in items),
@@ -357,6 +456,7 @@ class ReportGenerator:
                 'adjustment_total': sum(item['adjustment'] for item in items)
             }
 
+        # 计算总计（使用过滤后的数据）
         analysis_totals = calc_totals(analysis_materials_report)
         guidance_totals = calc_totals(guidance_materials_report)
 
@@ -864,18 +964,17 @@ class ReportGenerator:
         if include_details:
             # 生成表1：材料价格分析表（无信息价材料）
             if analysis_materials:
-                # 筛选核增（减）额为负数的数据（即AI价 < 送审价，核减）
-                filtered_materials = [
-                    m for m in analysis_materials
-                    if m.get('adjustment', 0) < 0
-                ]
+                # 为了保持与系统数据一致，显示所有分析材料，不再筛选负向核增减额
+                filtered_materials = analysis_materials
+                
                 # 按权重百分比降序排序（权重高的材料排在前面）
                 filtered_materials.sort(
                     key=lambda x: x.get('weightPercentage', 0),
                     reverse=True
                 )
-                # 下载的报告仅展示权重最高的前15条记录
-                filtered_materials = filtered_materials[:15]
+                
+                # 移除数量限制，显示所有数据
+                # filtered_materials = filtered_materials[:15]
 
                 if filtered_materials:
                     self.create_standard_material_table(
@@ -886,7 +985,7 @@ class ReportGenerator:
                         project.name or "未命名项目"
                     )
                 else:
-                    p = doc.add_paragraph("表1：未发现核减材料（无负向核增减额）。")
+                    p = doc.add_paragraph("表1：无数据。")
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
             # 生成表2：材料价格分析表（市场信息价材料）
