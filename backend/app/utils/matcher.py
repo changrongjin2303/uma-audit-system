@@ -31,15 +31,15 @@ class MaterialMatcher:
     
     # 匹配阈值设定
     THRESHOLDS = {
-        'high': 0.85,      # 高匹配度，自动匹配
-        'medium': 0.65,    # 中匹配度，需要人工确认
-        'low': 0.45        # 低匹配度，标记为疑似
+        'high': 0.75,      # 高匹配度，自动匹配
+        'medium': 0.50,    # 中匹配度，需要人工确认
+        'low': 0.30        # 低匹配度，标记为疑似
     }
     
     # 权重配置：名称主导，规格辅助
     WEIGHTS = {
-        'name': 0.7,           # 名称权重 (主导)
-        'specification': 0.3,  # 规格权重 (区分同名不同规格)
+        'name': 0.9,           # 名称权重 (主导)
+        'specification': 0.1,  # 规格权重 (区分同名不同规格)
         'category': 0.0,       # 分类不参与评分
         'unit': 0.0            # 单位不参与评分
     }
@@ -277,8 +277,8 @@ class MaterialMatcher:
         # 转换为小写
         text = text.lower()
         
-        # 移除多余空格
-        text = re.sub(r'\s+', ' ', text).strip()
+        # 移除所有空格 (修复 "角 钢" 和 "角钢" 不匹配的问题)
+        text = re.sub(r'\s+', '', text)
         
         # 统一标点符号
         text = text.replace('（', '(').replace('）', ')')

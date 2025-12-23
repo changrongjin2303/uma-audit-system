@@ -210,7 +210,7 @@
                   </el-button>
                   
                   <!-- 分析进度展示 -->
-                  <div v-if="analysisState.isAnalyzing" class="analysis-progress">
+                  <div v-if="analysisState.isAnalyzing || analysisState.isIdentifying" class="analysis-progress">
                     <div class="progress-info">
                       <span class="progress-text">{{ analysisState.currentStep }}</span>
                       <span class="progress-percent">{{ Math.round(analysisState.progress) }}%</span>
@@ -407,12 +407,12 @@
                 <el-table-column label="匹配状态" width="120">
                   <template #default="{ row }">
                     <el-tag
-                      :type="row.is_matched ? 'success' : 'info'"
+                      :type="row.is_matched ? 'success' : (row.needs_review ? 'warning' : 'info')"
                       size="small"
                     >
-                      {{ row.is_matched ? '已匹配' : '未匹配' }}
+                      {{ row.is_matched ? '已匹配' : (row.needs_review ? '需人工复核' : '未匹配') }}
                     </el-tag>
-                    <div v-if="row.is_matched && row.match_score" class="match-score">
+                    <div v-if="row.match_score !== null && row.match_score !== undefined" class="match-score">
                       匹配度: {{ (row.match_score * 100).toFixed(1) }}%
                     </div>
                   </template>
@@ -994,6 +994,7 @@ const unitOptions = computed(() => {
 // 分析状态管理
 const analysisState = reactive({
   isAnalyzing: false,
+  isIdentifying: false,
   progress: 0,
   currentStep: '',
   totalSteps: 0,
@@ -1402,25 +1403,41 @@ const startMaterialIdentification = async () => {
       }
     )
 
-    loading.value = true
-    ElMessage.info('正在进行材料匹配分析...')
+    // 开启后台分析状态
+    analysisState.isIdentifying = true
+    analysisState.progress = 0
+    analysisState.currentStep = '正在进行材料匹配分析...'
+    
+    ElMessage.info('无信息价材料识别已在后台开始...')
+    
+    // 模拟进度
+    const progressTimer = setInterval(() => {
+        if (analysisState.progress < 95) {
+            analysisState.progress += Math.floor(Math.random() * 5) + 1
+        }
+    }, 800)
 
     const provinceName = resolveRegionName(project.value?.base_price_province, PROVINCE_MAP)
     const cityName = resolveRegionName(project.value?.base_price_city, CITY_MAP)
     const districtName = resolveRegionName(project.value?.base_price_district, DISTRICT_MAP)
 
     // 调用材料匹配API - 三级匹配模式
+    // 传入 { __skipLoading: true } 跳过全局loading
     const result = await matchProjectMaterials(route.params.id, {
       batchSize: 100,
-      autoMatchThreshold: 0.85,
+      autoMatchThreshold: 0.75,
       enableHierarchicalMatching: true,
       basePriceDate: project.value?.base_price_date || null,
       basePriceProvince: provinceName,
       basePriceCity: cityName,
       basePriceDistrict: districtName
-    })
+    }, { __skipLoading: true })
 
     console.log('材料匹配结果:', result)
+    
+    clearInterval(progressTimer)
+    analysisState.progress = 100
+    analysisState.currentStep = '匹配完成'
 
     // 刷新项目统计信息
     await fetchProjectStats()
@@ -1436,7 +1453,10 @@ const startMaterialIdentification = async () => {
       ElMessage.error('分析失败: ' + (error.message || error.response?.data?.detail || '未知错误'))
     }
   } finally {
-    loading.value = false
+    // 延迟关闭进度条
+    setTimeout(() => {
+        analysisState.isIdentifying = false
+    }, 2000)
   }
 }
 

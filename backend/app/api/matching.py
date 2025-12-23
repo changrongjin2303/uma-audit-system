@@ -15,7 +15,7 @@ router = APIRouter()
 class HierarchicalMatchingRequest(BaseModel):
     """三级材料匹配请求模型"""
     batch_size: int = 100
-    auto_match_threshold: float = 0.85
+    auto_match_threshold: float = 0.75
     # 基期信息价参数
     base_price_date: Optional[str] = None
     base_price_province: Optional[str] = None

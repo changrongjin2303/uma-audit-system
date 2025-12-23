@@ -1,7 +1,7 @@
 import { request } from '@/utils/request'
 
 // 批量匹配项目材料
-export function matchProjectMaterials(projectId, options = {}) {
+export function matchProjectMaterials(projectId, options = {}, config = {}) {
   return request.post(`/matching/${projectId}/match-materials`, {
     batch_size: options.batchSize ?? 100,
     auto_match_threshold: options.autoMatchThreshold ?? 0.85,
@@ -10,7 +10,7 @@ export function matchProjectMaterials(projectId, options = {}) {
     base_price_city: options.basePriceCity ?? null,
     base_price_district: options.basePriceDistrict ?? null,
     enable_hierarchical_matching: Boolean(options.enableHierarchicalMatching)
-  })
+  }, config)
 }
 
 // 获取项目材料匹配统计信息

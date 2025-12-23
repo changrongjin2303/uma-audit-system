@@ -17,15 +17,15 @@ class MaterialMatchingService:
         self.matcher = MaterialMatcher()
     
     # 匹配阈值常量
-    HIGH_MATCH_THRESHOLD = 0.85  # 高匹配度阈值，自动标记为已匹配
-    REVIEW_THRESHOLD = 0.65      # 中匹配度阈值，标记为需人工复核
+    HIGH_MATCH_THRESHOLD = 0.75  # 高匹配度阈值，自动标记为已匹配
+    REVIEW_THRESHOLD = 0.50      # 中匹配度阈值，标记为需人工复核
     
     async def match_project_materials(
         self,
         db: AsyncSession,
         project_id: int,
         batch_size: int = 100,
-        auto_match_threshold: float = 0.85
+        auto_match_threshold: float = 0.75
     ) -> Dict[str, Any]:
         """匹配项目中的所有材料"""
         
@@ -78,26 +78,26 @@ class MaterialMatchingService:
                     if match_results:
                         best_match = match_results[0]
 
-                        # 相似度 >= 0.85：标记为已匹配
-                        if best_match.similarity_score >= self.HIGH_MATCH_THRESHOLD:
+                        # 相似度 >= auto_match_threshold：标记为已匹配
+                        if best_match.similarity_score >= auto_match_threshold:
                             await self._update_material_match(
                                 db, project_material, best_match, 
                                 is_matched=True, needs_review=False
                             )
                             matched_count += 1
                             auto_matched += 1
-                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} >= 0.85，标记为已匹配")
+                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} >= {auto_match_threshold}，标记为已匹配")
                         
-                        # 相似度 >= 0.65 且 < 0.85：标记为需人工复核
+                        # 相似度 >= 0.50 且 < auto_match_threshold：标记为需人工复核
                         elif best_match.similarity_score >= self.REVIEW_THRESHOLD:
                             await self._update_material_match(
                                 db, project_material, best_match,
                                 is_matched=False, needs_review=True
                             )
                             needs_review_count += 1
-                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} 在 0.65-0.85 之间，标记为需人工复核")
+                            logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} 在 {self.REVIEW_THRESHOLD}-{auto_match_threshold} 之间，标记为需人工复核")
                         
-                        # 相似度 < 0.65：未匹配
+                        # 相似度 < 0.50：未匹配
                         else:
                             logger.debug(f"材料 '{project_material.material_name}' 相似度 {best_match.similarity_score:.3f} < 0.65，标记为未匹配")
 
@@ -291,9 +291,9 @@ class MaterialMatchingService:
         hierarchical_matched = [m for m in matched_materials if m.match_method and "hierarchical" in m.match_method]
         
         # 按置信度分类
-        high_confidence = [m for m in matched_materials if m.match_score and m.match_score >= 0.85]
-        medium_confidence = [m for m in needs_review_materials if m.match_score and 0.65 <= m.match_score < 0.85]
-        low_confidence = [m for m in total_materials if m.match_score and m.match_score < 0.65]
+        high_confidence = [m for m in matched_materials if m.match_score and m.match_score >= 0.75]
+        medium_confidence = [m for m in needs_review_materials if m.match_score and 0.50 <= m.match_score < 0.75]
+        low_confidence = [m for m in total_materials if m.match_score and m.match_score < 0.50]
         
         return {
             'total_materials': len(total_materials),
@@ -344,28 +344,16 @@ class MaterialMatchingService:
         db: AsyncSession,
         project_id: int
     ) -> List[ProjectMaterial]:
-        """获取待处理的项目材料（未匹配且不需要复核的）"""
+        """获取待处理的项目材料（所有未匹配的材料，包括需人工复核的）"""
         
-        try:
-            # 尝试使用 needs_review 字段（新版本）
-            if hasattr(ProjectMaterial, 'needs_review'):
-                stmt = select(ProjectMaterial).where(
-                    and_(
-                        ProjectMaterial.project_id == project_id,
-                        ProjectMaterial.is_matched == False,
-                        or_(ProjectMaterial.needs_review == False, ProjectMaterial.needs_review == None)
-                    )
-                )
-            else:
-                raise AttributeError("needs_review field not found")
-        except Exception:
-            # 回退到旧版本查询
-            stmt = select(ProjectMaterial).where(
-                and_(
-                    ProjectMaterial.project_id == project_id,
-                    ProjectMaterial.is_matched == False
-                )
+        # 获取所有未匹配的材料，包括"需人工复核"状态的材料
+        # 这样当调整匹配阈值时，可以重新评估之前被标记为"需人工复核"的材料
+        stmt = select(ProjectMaterial).where(
+            and_(
+                ProjectMaterial.project_id == project_id,
+                ProjectMaterial.is_matched == False
             )
+        )
         result = await db.execute(stmt)
         return result.scalars().all()
     
@@ -512,7 +500,7 @@ class MaterialMatchingService:
         db: AsyncSession,
         project_id: int,
         batch_size: int = 100,
-        auto_match_threshold: float = 0.85,
+        auto_match_threshold: float = 0.75,
         base_price_date: Optional[str] = None,
         base_price_province: Optional[str] = None,
         base_price_city: Optional[str] = None,
@@ -521,9 +509,9 @@ class MaterialMatchingService:
         """三级地理层次材料匹配
         
         匹配规则：
-        - 相似度 >= 0.85：已匹配（有信息价）
-        - 相似度 >= 0.65 且 < 0.85：需人工复核
-        - 相似度 < 0.65：未匹配（无信息价）
+        - 相似度 >= 0.75：已匹配（有信息价）
+        - 相似度 >= 0.50 且 < 0.75：需人工复核
+        - 相似度 < 0.50：未匹配（无信息价）
         """
 
         logger.info(f"开始三级匹配项目 {project_id} 的材料")
@@ -564,7 +552,7 @@ class MaterialMatchingService:
             )
 
             remaining_materials, matched_count, review_count = await self._match_materials_with_base(
-                db, remaining_materials, district_base_materials, "district"
+                db, remaining_materials, district_base_materials, "district", auto_match_threshold
             )
             district_matched = matched_count
             district_review = review_count
@@ -578,7 +566,7 @@ class MaterialMatchingService:
             )
 
             remaining_materials, matched_count, review_count = await self._match_materials_with_base(
-                db, remaining_materials, city_base_materials, "city"
+                db, remaining_materials, city_base_materials, "city", auto_match_threshold
             )
             city_matched = matched_count
             city_review = review_count
@@ -592,7 +580,7 @@ class MaterialMatchingService:
             )
 
             remaining_materials, matched_count, review_count = await self._match_materials_with_base(
-                db, remaining_materials, province_base_materials, "province"
+                db, remaining_materials, province_base_materials, "province", auto_match_threshold
             )
             province_matched = matched_count
             province_review = review_count
@@ -678,14 +666,15 @@ class MaterialMatchingService:
         db: AsyncSession,
         materials: List[ProjectMaterial],
         base_materials: List[Dict[str, Any]],
-        level: str
+        level: str,
+        match_threshold: float = 0.75
     ) -> Tuple[List[ProjectMaterial], int, int]:
         """将材料与基准材料进行匹配
         
         匹配规则：
-        - 相似度 >= 0.85：已匹配（有信息价）
-        - 相似度 >= 0.65 且 < 0.85：需人工复核
-        - 相似度 < 0.65：未匹配（无信息价）
+        - 相似度 >= match_threshold：已匹配（有信息价）
+        - 相似度 >= 0.50 且 < match_threshold：需人工复核
+        - 相似度 < 0.50：未匹配（无信息价）
         
         Returns:
             (remaining_materials, matched_count, review_count)
@@ -716,8 +705,8 @@ class MaterialMatchingService:
             if match_result:
                 score = match_result.similarity_score
                 
-                # 相似度 >= 0.85：标记为已匹配
-                if score >= self.HIGH_MATCH_THRESHOLD:
+                # 相似度 >= match_threshold：标记为已匹配
+                if score >= match_threshold:
                     material.is_matched = True
                     if hasattr(material, 'needs_review'):
                         try:
@@ -732,7 +721,7 @@ class MaterialMatchingService:
                     matched_count += 1
                     logger.debug(f"材料 '{material.material_name}' 在 {level} 级匹配成功，相似度: {score:.3f}")
                 
-                # 相似度 >= 0.65 且 < 0.85：标记为需人工复核
+                # 相似度 >= 0.50 且 < match_threshold：标记为需人工复核
                 elif score >= self.REVIEW_THRESHOLD:
                     material.is_matched = False
                     if hasattr(material, 'needs_review'):
@@ -748,7 +737,7 @@ class MaterialMatchingService:
                     review_count += 1
                     logger.debug(f"材料 '{material.material_name}' 在 {level} 级需人工复核，相似度: {score:.3f}")
                 
-                # 相似度 < 0.65：未匹配，继续下一级
+                # 相似度 < 0.50：未匹配，继续下一级
                 else:
                     remaining_materials.append(material)
             else:
